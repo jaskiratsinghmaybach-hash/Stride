@@ -111,7 +111,7 @@ export default function OnboardingScreen() {
   return (
     <KeyboardAvoidingView
       className="flex-1"
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      behavior="padding"
       keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
       style={{ backgroundColor: colors.background }}
     >
@@ -150,7 +150,12 @@ export default function OnboardingScreen() {
         <ScrollView
           ref={scrollRef}
           className="flex-1"
-          contentContainerStyle={{ flexGrow: 1, justifyContent: "center", paddingTop: 8, paddingBottom: 24 }}
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: step === 3 ? "flex-start" : "center",
+            paddingTop: step === 3 ? 24 : 8,
+            paddingBottom: 24,
+          }}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
@@ -192,9 +197,7 @@ export default function OnboardingScreen() {
                     onSubmitEditing={Keyboard.dismiss}
                     className="text-xl"
                     style={{ color: colors.ink }}
-                    onFocus={() => {
-                      setTimeout(() => scrollRef.current?.scrollTo({ y: 90, animated: true }), 80);
-                    }}
+                    autoFocus
                   />
                 </View>
                 <Text className="mt-3 px-1 text-sm" style={{ color: colors.muted }}>
@@ -230,10 +233,10 @@ export default function OnboardingScreen() {
                           }
                           className="rounded-[20px] px-5 py-4"
                           style={{
+                            ...cardStyle(colors),
                             backgroundColor: active ? colors.accentSoft : colors.surface,
                             borderWidth: active ? 1 : 0,
                             borderColor: colors.accent,
-                            ...cardStyle(colors),
                           }}
                         >
                           <Text className="font-semibold" style={{ color: active ? colors.accent : colors.ink }}>

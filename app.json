@@ -1,7 +1,8 @@
 {
   "expo": {
-    "name": "STRIDE",
+    "name": "Stride",
     "slug": "stride",
+    "icon": "./assets/icon.png",
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
@@ -9,8 +10,10 @@
     "newArchEnabled": true,
     "android": {
       "package": "com.stride.app",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
-        "backgroundColor": "#E8ECF4"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#050929"
       },
       "softwareKeyboardLayoutMode": "resize"
     },
@@ -20,7 +23,7 @@
     "plugins": [
       "expo-router",
       "expo-notifications",
-      "react-native-nitro-google-signin"
+      "@react-native-google-signin/google-signin"
     ],
     "experiments": {
       "typedRoutes": true

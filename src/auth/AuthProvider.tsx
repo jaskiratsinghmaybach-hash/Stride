@@ -9,7 +9,7 @@ import {
 
 import type { Session } from "@supabase/supabase-js";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { GoogleOneTapSignIn } from "react-native-nitro-google-signin";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 
 import { supabase, supabaseConfigured } from "./supabase";
 import type { OnboardingData, StrideProfile } from "./types";
@@ -105,22 +105,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
         };
       }
 
-      GoogleOneTapSignIn.configure({
+      GoogleSignin.configure({
         webClientId,
       });
 
-      const result = await GoogleOneTapSignIn.signIn();
+      await GoogleSignin.hasPlayServices();
 
-if (!result?.data?.idToken) {
-  return {
-    error: "Google did not return an ID token.",
-  };
-}
+      const result = await GoogleSignin.signIn();
 
-const { data, error } = await supabase.auth.signInWithIdToken({
-  provider: "google",
-  token: result.data.idToken,
-});
+      if (!result.data?.idToken) {
+        return {
+          error: "Google did not return an ID token.",
+        };
+      }
+
+      const { data, error } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: result.data.idToken,
+      });
 
       if (error) {
         return { error: error.message };
@@ -133,45 +135,43 @@ const { data, error } = await supabase.auth.signInWithIdToken({
       return {};
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : "Google sign-in failed.";
+        error instanceof Error ? error.message : "Google sign-in failed.";
 
       return { error: message };
     }
   }, []);
 
-  const saveOnboarding = useCallback(async (data: OnboardingData) => {
-    let userId = session?.user.id;
+  const saveOnboarding = useCallback(
+    async (data: OnboardingData) => {
+      let userId = session?.user.id;
 
-    if (supabase) {
-      const { data: authData } = await supabase.auth.getUser();
-      userId = authData.user?.id ?? userId;
-    }
+      if (supabase) {
+        const { data: authData } = await supabase.auth.getUser();
+        userId = authData.user?.id ?? userId;
+      }
 
-    const finalUserId = userId ?? "local-preview-user";
+      const finalUserId = userId ?? "local-preview-user";
 
-    const p: StrideProfile = {
-      ...data,
-      userId: finalUserId,
-    };
+      const p: StrideProfile = {
+        ...data,
+        userId: finalUserId,
+      };
 
-    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(p));
-    await AsyncStorage.setItem(ONBOARDING_KEY, "true");
+      await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+      await AsyncStorage.setItem(ONBOARDING_KEY, "true");
 
-    setProfile(p);
-    setOnboardingComplete(true);
-  }, [session?.user.id]);
+      setProfile(p);
+      setOnboardingComplete(true);
+    },
+    [session?.user.id],
+  );
 
   const signOut = useCallback(async () => {
     if (supabase) {
       await supabase.auth.signOut();
     }
 
-    await AsyncStorage.multiRemove([
-      PROFILE_KEY,
-      ONBOARDING_KEY,
-    ]);
+    await AsyncStorage.multiRemove([PROFILE_KEY, ONBOARDING_KEY]);
 
     setSession(null);
     setProfile(null);

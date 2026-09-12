@@ -6,23 +6,26 @@ import {
   ArrowLeft,
   ChevronRight,
   Clock,
+  Cloud,
+  CloudOff,
   Crown,
   LogOut,
-  Music,
+  RefreshCcw,
   Shield,
-  Sparkles,
   User,
 } from "lucide-react-native";
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
+import { useSyncStatus } from "@/hooks/useSyncStatus";
 
 export default function SettingsScreen() {
   const { colors } = useStrideTheme();
   const { session, profile, signOut } = useAuth();
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { status: syncStatus, pendingCount, lastSyncedAt, retryNow } = useSyncStatus();
 
   const handleSignOut = async () => {
     await signOut();
@@ -196,6 +199,53 @@ export default function SettingsScreen() {
               </View>
             </LiquidGlass>
           </Pressable>
+        </View>
+
+        {/* CLOUD SYNC STATUS — Calm, honest, never fabricates "synced" with pending entries */}
+        <View className="mb-6">
+          <Text
+            className="mb-2.5 text-xs font-semibold tracking-wider uppercase"
+            style={{ color: colors.muted }}
+          >
+            CLOUD SYNC
+          </Text>
+
+          <LiquidGlass shape="card">
+            <View className="p-4">
+              <View className="flex-row items-center justify-between">
+                <View className="flex-row items-center gap-2.5">
+                  {syncStatus === "offline" ? (
+                    <CloudOff size={16} color={colors.muted} />
+                  ) : syncStatus === "error" ? (
+                    <CloudOff size={16} color={colors.spark} />
+                  ) : syncStatus === "syncing" ? (
+                    <RefreshCcw size={16} color={colors.accent} />
+                  ) : (
+                    <Cloud size={16} color={colors.accent} />
+                  )}
+                  <Text className="text-sm font-medium" style={{ color: colors.ink }}>
+                    {syncStatus === "offline"
+                      ? "Offline — changes saved on this device"
+                      : syncStatus === "error"
+                      ? "Sync error, will retry"
+                      : syncStatus === "syncing"
+                      ? `Syncing (${pendingCount} pending)...`
+                      : lastSyncedAt
+                      ? `Synced ${lastSyncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                      : "Ready to sync"}
+                  </Text>
+                </View>
+
+                {(syncStatus === "error" || syncStatus === "syncing") && (
+                  <Pressable onPress={retryNow} hitSlop={12}>
+                    <Text className="text-xs font-semibold" style={{ color: colors.accent }}>
+                      Retry
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          </LiquidGlass>
         </View>
 
         {/* ABOUT & APP INFO */}

@@ -1,5 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { Task } from "@/types/task";
+import { enqueueSync } from "../sync/syncQueue";
+import { scheduleDebouncedSync } from "../sync/contextSync";
 
 function getTasksStorageKey(userId: string): string {
   return `stride.tasks.${userId}`;
@@ -36,8 +38,13 @@ export async function createTask(
   const nextTasks = [newTask, ...tasks];
   await AsyncStorage.setItem(getTasksStorageKey(userId), JSON.stringify(nextTasks));
 
-  // TODO: Mirror to Supabase tasks table when online:
-  // supabase.from('tasks').insert({ ...newTask, user_id: userId })
+  // Enqueue outbox entry — never awaited in a way that blocks the local write.
+  enqueueSync(userId, {
+    entity: "task",
+    op: "upsert",
+    entityId: newTask.id,
+    payload: newTask,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
 
   return newTask;
 }
@@ -59,7 +66,13 @@ export async function updateTask(
 
   await AsyncStorage.setItem(getTasksStorageKey(userId), JSON.stringify(tasks));
 
-  // TODO: Mirror update to Supabase tasks table when online
+  enqueueSync(userId, {
+    entity: "task",
+    op: "upsert",
+    entityId: updated.id,
+    payload: updated,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return updated;
 }
 
@@ -76,6 +89,12 @@ export async function deleteTask(userId: string, taskId: string): Promise<boolea
   if (nextTasks.length === tasks.length) return false;
 
   await AsyncStorage.setItem(getTasksStorageKey(userId), JSON.stringify(nextTasks));
-  // TODO: Mirror delete to Supabase tasks table when online
+
+  enqueueSync(userId, {
+    entity: "task",
+    op: "delete",
+    entityId: taskId,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return true;
 }

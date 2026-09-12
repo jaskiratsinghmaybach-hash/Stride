@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { ContextItem, ContextItemType } from "@/types/contextItem";
 import type { Project } from "@/types/project";
+import { enqueueSync } from "../sync/syncQueue";
+import { scheduleDebouncedSync } from "../sync/contextSync";
 
 function getProjectsKey(userId: string): string {
   return `stride.projects.${userId}`;
@@ -32,7 +34,14 @@ export async function createProject(userId: string, name: string): Promise<Proje
 
   const next = [newProject, ...projects];
   await AsyncStorage.setItem(getProjectsKey(userId), JSON.stringify(next));
-  // TODO: Mirror to Supabase projects table when online
+
+  enqueueSync(userId, {
+    entity: "project",
+    op: "upsert",
+    entityId: newProject.id,
+    payload: newProject,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return newProject;
 }
 
@@ -77,7 +86,14 @@ export async function createContextItem(
 
   const next = [newItem, ...items];
   await AsyncStorage.setItem(getContextItemsKey(userId), JSON.stringify(next));
-  // TODO: Mirror to Supabase context_items table when online
+
+  enqueueSync(userId, {
+    entity: "context_item",
+    op: "upsert",
+    entityId: newItem.id,
+    payload: newItem,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return newItem;
 }
 
@@ -97,7 +113,14 @@ export async function updateContextItem(
   items[index] = updated;
 
   await AsyncStorage.setItem(getContextItemsKey(userId), JSON.stringify(items));
-  // TODO: Mirror to Supabase context_items table when online
+
+  enqueueSync(userId, {
+    entity: "context_item",
+    op: "upsert",
+    entityId: updated.id,
+    payload: updated,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return updated;
 }
 

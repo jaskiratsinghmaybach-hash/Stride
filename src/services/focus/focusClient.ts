@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { FocusSession } from "@/types/focus";
 import { completeTask, updateTask } from "../tasks/taskClient";
+import { enqueueSync } from "../sync/syncQueue";
+import { scheduleDebouncedSync } from "../sync/contextSync";
 
 function getFocusSessionsKey(userId: string): string {
   return `stride.focus_sessions.${userId}`;
@@ -34,6 +36,15 @@ export async function startFocusSession(
   await AsyncStorage.setItem(getFocusSessionsKey(userId), JSON.stringify([newSession, ...sessions]));
   // Mark task as in_progress
   await updateTask(userId, taskId, { status: "in_progress" });
+
+  // Enqueue sync for the new session (initial "active" state).
+  enqueueSync(userId, {
+    entity: "focus_session",
+    op: "upsert",
+    entityId: newSession.id,
+    payload: newSession,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return newSession;
 }
 
@@ -48,6 +59,20 @@ export async function recordFocusProgress(
 
   sessions[index].durationSeconds = elapsedSeconds;
   await AsyncStorage.setItem(getFocusSessionsKey(userId), JSON.stringify(sessions));
+
+  // THROTTLING DECISION: No sync enqueue on progress ticks.
+  //
+  // recordFocusProgress fires approximately once per second while a session is active.
+  // Enqueueing on every tick would flood the outbox queue with per-second entries
+  // and hit Supabase with write-per-second traffic. The enqueueSync() deduplication
+  // logic does collapse repeat upserts for the same entityId, but still pays the
+  // AsyncStorage read+write cost every second — unnecessary for intermediate state.
+  //
+  // Strategy chosen: SKIP queuing entirely here. The final state is written via
+  // completeFocusSession() or abandonFocusSession(), which both enqueue with the
+  // accumulated durationSeconds. The only data "lost" in a hard crash is the
+  // sub-second progress delta since the last completeFocusSession() — acceptable.
+
   return sessions[index];
 }
 
@@ -72,7 +97,14 @@ export async function completeFocusSession(
     await completeTask(userId, session.taskId);
   }
 
-  // TODO: Mirror to Supabase focus_sessions table when online
+  // Enqueue final state sync — replaces the "active" entry in the queue via dedup.
+  enqueueSync(userId, {
+    entity: "focus_session",
+    op: "upsert",
+    entityId: session.id,
+    payload: { ...session },
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return session;
 }
 
@@ -91,5 +123,14 @@ export async function abandonFocusSession(
   session.status = "abandoned";
 
   await AsyncStorage.setItem(getFocusSessionsKey(userId), JSON.stringify(sessions));
+
+  // Enqueue final state sync — replaces the "active" entry in the queue via dedup.
+  enqueueSync(userId, {
+    entity: "focus_session",
+    op: "upsert",
+    entityId: session.id,
+    payload: { ...session },
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
   return session;
 }

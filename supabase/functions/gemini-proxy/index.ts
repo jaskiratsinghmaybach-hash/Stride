@@ -133,7 +133,7 @@ serve(async (req) => {
     );
 
     // 4. Construct real Vertex AI endpoint (draws directly from Google Cloud credits)
-    const vertexEndpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/gemini-1.5-flash:generateContent`;
+    const vertexEndpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/gemini-2.5-flash:generateContent`;
 
     let prompt = "";
     let systemInstruction = "You are Stride AI, an intelligent executive productivity engine.";

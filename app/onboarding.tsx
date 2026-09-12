@@ -199,7 +199,7 @@ export default function OnboardingScreen() {
           </Text>
         </View>
 
-        <ScrollView
+        <ScrollView overScrollMode="always"
           ref={scrollRef}
           className="flex-1"
           contentContainerStyle={{

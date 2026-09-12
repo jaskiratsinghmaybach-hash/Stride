@@ -18,7 +18,8 @@ import {
 } from "./aiClient";
 import * as vertexClient from "./vertexClient";
 import { updateContextItem, getContextItems, relateContextToTask } from "../vault/vaultClient";
-import { createTask, getTask } from "../tasks/taskClient";
+import { getTask } from "../tasks/taskClient";
+import { addTaskSuggestions } from "../tasks/taskSuggestions";
 import type { TaskPriority } from "@/types/task";
 
 const MAX_AI_ATTEMPTS = 3;
@@ -93,11 +94,15 @@ async function processSingleJob(userId: string, job: AiJob): Promise<void> {
       }
 
       case "understand_image": {
-        const uri = payload.uri;
+        const imageBase64 = payload.imageBase64;
+        const mimeType = payload.mimeType;
         const title = payload.title;
         const contextId = payload.contextId;
 
-        const res = await vertexClient.understandImage(uri, title);
+        if (!imageBase64 || !mimeType) {
+          throw new Error("Image data is unavailable; refusing filename-only analysis");
+        }
+        const res = await vertexClient.understandImage(imageBase64, mimeType, title);
 
         if (contextId) {
           await updateContextItem(userId, contextId, {
@@ -118,13 +123,14 @@ async function processSingleJob(userId: string, job: AiJob): Promise<void> {
             if (item.title) {
               const priority: TaskPriority =
                 item.priority === "high" || item.priority === "low" ? item.priority : "normal";
-              await createTask(userId, {
+              await addTaskSuggestions(userId, [{
+                id: `suggestion_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 title: item.title,
                 priority,
                 dueDate: item.dueDate || undefined,
                 projectId: item.project || undefined,
-                status: "inbox",
-              });
+                createdAt: new Date().toISOString(),
+              }]);
             }
           }
         }

@@ -151,8 +151,7 @@ export default function TaskDetailScreen() {
         />
       </View>
 
-      <ScrollView
-        className="flex-1"
+      <ScrollView overScrollMode="always" className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
           paddingBottom: 40,

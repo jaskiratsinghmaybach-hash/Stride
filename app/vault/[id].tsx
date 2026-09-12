@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -10,6 +11,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as FileSystem from "expo-file-system/legacy";
 import {
   ArrowLeft,
   Bot,
@@ -28,7 +30,7 @@ import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { ContextItem } from "@/types/contextItem";
 import type { Project } from "@/types/project";
 import type { Task } from "@/types/task";
-import { getContextItem, getProjects, updateContextItem } from "@/services/vault/vaultClient";
+import { deleteContextItem, getContextItem, getProjects, updateContextItem } from "@/services/vault/vaultClient";
 import { getTasks, createTask } from "@/services/tasks/taskClient";
 import { enqueueAiJob } from "@/services/ai/aiClient";
 
@@ -83,11 +85,19 @@ export default function ContextItemDetailScreen() {
     setStatusNotice("Queuing analysis in AI worker...");
 
     try {
+      const imagePayload = item.type === "image" && item.uri && item.mimeType
+        ? {
+            imageBase64: await FileSystem.readAsStringAsync(item.uri, {
+              encoding: FileSystem.EncodingType.Base64,
+            }),
+            mimeType: item.mimeType,
+          }
+        : {};
       await enqueueAiJob({
         id: `job_${Date.now()}`,
         type: item.type === "image" ? "understand_image" : "understand_document",
         priority: "normal",
-        payload: { contextId: item.id, title: item.title },
+        payload: { contextId: item.id, title: item.title, ...imagePayload },
       });
 
       // Update state honestly to 'analyzing'
@@ -102,6 +112,43 @@ export default function ContextItemDetailScreen() {
     } finally {
       setIsSummarizing(false);
     }
+  };
+
+  const handleRename = () => {
+    if (!item || !userId) return;
+    Alert.prompt("Rename context", "Give this item a clearer name.", async (value) => {
+      const title = value?.trim();
+      if (!title) return;
+      let nextUri = item.uri;
+      if (item.uri?.startsWith("file://")) {
+        const lastSlash = item.uri.lastIndexOf("/");
+        const oldName = item.uri.slice(lastSlash + 1);
+        const extension = oldName.includes(".") ? oldName.slice(oldName.lastIndexOf(".")) : "";
+        const target = `${item.uri.slice(0, lastSlash + 1)}${title.replace(/[\\/:*?"<>|]/g, "_")}${extension}`;
+        try {
+          await FileSystem.moveAsync({ from: item.uri, to: target });
+          nextUri = target;
+        } catch (error) {
+          console.warn("Unable to rename owned local file", error);
+        }
+      }
+      const updated = await updateContextItem(userId, item.id, { title, uri: nextUri });
+      if (updated) {
+        setItem(updated);
+        setStatusNotice(nextUri === item.uri ? "Name updated locally; the source file could not be renamed." : "Name and local file updated; queued for sync.");
+      }
+    }, "plain-text", item.title);
+  };
+
+  const handleDelete = () => {
+    if (!item || !userId) return;
+    Alert.alert("Delete context item?", "This removes the local item and queues its deletion for sync.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete", style: "destructive", onPress: async () => {
+        await deleteContextItem(userId, item.id);
+        router.back();
+      }},
+    ]);
   };
 
   const handleCreateTaskFromContext = async () => {
@@ -158,6 +205,7 @@ export default function ContextItemDetailScreen() {
 
       <ScrollView
         className="flex-1"
+        overScrollMode="always"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
           paddingBottom: 40,
@@ -204,6 +252,14 @@ export default function ContextItemDetailScreen() {
               </Text>
             </View>
           )}
+        </View>
+        <View className="mt-4 flex-row gap-2">
+          <Pressable onPress={handleRename} className="rounded-full bg-white/10 px-3 py-2">
+            <Text className="text-xs font-semibold" style={{ color: colors.ink }}>Rename</Text>
+          </Pressable>
+          <Pressable onPress={handleDelete} className="rounded-full bg-red-500/20 px-3 py-2">
+            <Text className="text-xs font-semibold text-red-200">Delete</Text>
+          </Pressable>
         </View>
 
         {statusNotice && (

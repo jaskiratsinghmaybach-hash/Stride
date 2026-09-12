@@ -26,7 +26,10 @@ import {
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
-import { createTask, getTask } from "@/services/tasks/taskClient";
+import { createTask, getTask, getTasks } from "@/services/tasks/taskClient";
+import { getFocusSessions } from "@/services/focus/focusClient";
+import { getRewardsSummary, toLocalDateString } from "@/services/rewards/rewardsEngine";
+import type { FocusSession } from "@/types/focus";
 
 const PRESET_DURATIONS = [25, 45, 90];
 
@@ -44,6 +47,22 @@ export default function FocusEntryScreen() {
   const [durationMinutes, setDurationMinutes] = useState(25);
   const [customDuration, setCustomDuration] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [todaySessions, setTodaySessions] = useState<FocusSession[]>([]);
+  const [streak, setStreak] = useState(0);
+  const [resumeTitle, setResumeTitle] = useState<string | null>(null);
+  const [resumeTaskId, setResumeTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!userId) return;
+    Promise.all([getFocusSessions(userId), getRewardsSummary(userId), getTasks(userId)]).then(([sessions, rewards, tasks]) => {
+      const today = toLocalDateString(new Date().toISOString());
+      setTodaySessions(sessions.filter((session) => toLocalDateString(session.startedAt) === today));
+      setStreak(rewards.currentStreak);
+      const active = sessions.find((session) => session.status === "active");
+      setResumeTaskId(active?.taskId || null);
+      setResumeTitle(active ? tasks.find((task) => task.id === active.taskId)?.title || "Active focus session" : null);
+    }).catch((error) => console.warn("Failed loading focus summary", error));
+  }, [userId]);
 
   useEffect(() => {
     if (params.taskId && userId) {
@@ -190,6 +209,17 @@ export default function FocusEntryScreen() {
                   </View>
                 </LiquidGlass>
               </Pressable>
+              <LiquidGlass shape="card" style={{ marginTop: 18 }}>
+                <View className="p-4">
+                  <Text className="text-xs font-semibold uppercase tracking-wider" style={{ color: colors.muted }}>TODAY'S FOCUS</Text>
+                  <Text className="mt-1 text-sm" style={{ color: colors.ink }}>
+                    {todaySessions.length} session{todaySessions.length === 1 ? "" : "s"} recorded ·{" "}
+                    {Math.round(todaySessions.reduce((total, session) => total + session.durationSeconds, 0) / 60)} min focused ·{" "}
+                    {streak}-day streak
+                  </Text>
+                  {resumeTitle && <Pressable onPress={() => resumeTaskId && router.push({ pathname: "/focus/session", params: { taskId: resumeTaskId } })} className="mt-3 rounded-full bg-indigo-500/30 px-3 py-2"><Text className="text-center text-xs font-semibold" style={{ color: colors.ink }}>Resume {resumeTitle}</Text></Pressable>}
+                </View>
+              </LiquidGlass>
             </Animated.View>
           )}
 
@@ -328,12 +358,6 @@ export default function FocusEntryScreen() {
           )}
         </View>
 
-        {/* Bottom subtle brand quote / footnote */}
-        <View className="items-center">
-          <Text className="text-[11px]" style={{ color: "rgba(245, 246, 255, 0.3)" }}>
-            STRIDE Focus Mode · Pure concentration
-          </Text>
-        </View>
       </View>
     </KeyboardAvoidingView>
   );

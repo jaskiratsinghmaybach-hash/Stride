@@ -3,6 +3,7 @@ import type { ContextItem, ContextItemType } from "@/types/contextItem";
 import type { Project } from "@/types/project";
 import { enqueueSync } from "../sync/syncQueue";
 import { scheduleDebouncedSync } from "../sync/contextSync";
+import * as FileSystem from "expo-file-system";
 
 function getProjectsKey(userId: string): string {
   return `stride.projects.${userId}`;
@@ -124,6 +125,29 @@ export async function updateContextItem(
   return updated;
 }
 
+export async function deleteContextItem(userId: string, id: string): Promise<boolean> {
+  const items = await getContextItems(userId);
+  const item = items.find((entry) => entry.id === id);
+  if (!item) return false;
+  await AsyncStorage.setItem(
+    getContextItemsKey(userId),
+    JSON.stringify(items.filter((entry) => entry.id !== id))
+  );
+  if (item.uri && item.uri.startsWith("file://")) {
+    await FileSystem.deleteAsync(item.uri, { idempotent: true }).catch((error) =>
+      console.warn("Failed deleting owned context file", error)
+    );
+  }
+  const { getTasks } = await import("../tasks/taskClient");
+  const tasks = await getTasks(userId);
+  await Promise.all(tasks.filter((task) => task.relatedContextIds?.includes(id)).map((task) =>
+    unlinkContextFromTask(userId, id, task.id)
+  ));
+  await enqueueSync(userId, { entity: "context_item", op: "delete", entityId: id });
+  scheduleDebouncedSync(userId);
+  return true;
+}
+
 export async function getContextItemsByIds(
   userId: string,
   ids: string[]
@@ -164,6 +188,7 @@ export async function relateContextToTask(
         relatedTaskIds: [...existingTasks, taskId],
       });
     }
+
   }
 
   if (task) {
@@ -178,3 +203,16 @@ export async function relateContextToTask(
   return { context: updatedContext, task: updatedTask };
 }
 
+export async function unlinkContextFromTask(
+  userId: string,
+  contextId: string,
+  taskId: string
+): Promise<void> {
+  const { getTask, updateTask } = await import("../tasks/taskClient");
+  const task = await getTask(userId, taskId);
+  if (task?.relatedContextIds?.includes(contextId)) {
+    await updateTask(userId, taskId, {
+      relatedContextIds: task.relatedContextIds.filter((id) => id !== contextId),
+    });
+  }
+}

@@ -8,6 +8,7 @@ import {
   Text,
   TextInput,
   View,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -15,6 +16,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
+import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";
 import {
   Archive,
   ArrowRight,
@@ -35,6 +37,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { ContextItem, ContextItemType } from "@/types/contextItem";
+import { inferContextItemType } from "@/types/contextItem";
 import type { Project } from "@/types/project";
 import {
   createProject,
@@ -42,6 +45,9 @@ import {
   getProjects,
 } from "@/services/vault/vaultClient";
 import { addAndIndexContextItem } from "@/services/vault/indexing";
+import { enqueueAiJob } from "@/services/ai/aiClient";
+import { createTask } from "@/services/tasks/taskClient";
+import { getTaskSuggestions, removeTaskSuggestion, type PendingTaskSuggestion } from "@/services/tasks/taskSuggestions";
 
 const FILTER_TABS: Array<{ id: ContextItemType | "all"; label: string }> = [
   { id: "all", label: "All" },
@@ -74,6 +80,10 @@ export default function VaultScreen() {
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
+  const [dumpText, setDumpText] = useState("");
+  const [suggestions, setSuggestions] = useState<PendingTaskSuggestion[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const loadVaultData = useCallback(async () => {
     if (!userId) {
@@ -87,12 +97,52 @@ export default function VaultScreen() {
       ]);
       setProjects(projs);
       setItems(allItems);
+      setSuggestions(await getTaskSuggestions(userId));
     } catch (err) {
       console.warn("Error loading vault", err);
     } finally {
       setIsLoading(false);
     }
   }, [userId]);
+
+  const handleDumpText = async () => {
+    if (!userId || !dumpText.trim()) return;
+    const item = await addAndIndexContextItem(userId, {
+      title: `Dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`,
+      type: "note", notes: dumpText.trim(), projectId: selectedProjectId || undefined,
+    });
+    await enqueueAiJob(userId, { id: `dump_${Date.now()}`, type: "extract_actions", priority: "normal", payload: { contextId: item.id, rawText: dumpText.trim() } });
+    setDumpText(""); setShowAddMenu(false); await loadVaultData();
+  };
+
+  const handleDumpAudio = async () => {
+    if (!userId) return;
+    try {
+      if (!isRecording) {
+        const permission = await requestRecordingPermissionsAsync();
+        if (!permission.granted) { Alert.alert("Microphone Permission", "Enable microphone access to record a Dump."); return; }
+        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await recorder.prepareToRecordAsync(); recorder.record(); setIsRecording(true); return;
+      }
+      await recorder.stop(); setIsRecording(false);
+      if (recorder.uri) {
+        const item = await addAndIndexContextItem(userId, { title: `Audio Dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`, type: "audio", uri: recorder.uri, projectId: selectedProjectId || undefined });
+        await enqueueAiJob(userId, { id: `dump_${Date.now()}`, type: "extract_actions", priority: "normal", payload: { contextId: item.id, rawText: "" } });
+        Alert.alert("Dump saved", "Audio is stored as raw audio. Speech-to-text is unavailable, so no actions were inferred.");
+        setShowAddMenu(false); await loadVaultData();
+      }
+    } catch (error) { console.warn("Failed recording Vault dump", error); setIsRecording(false); }
+  };
+
+  const handleAcceptSuggestion = async (suggestion: PendingTaskSuggestion) => {
+    if (!userId) return;
+    await createTask(userId, { title: suggestion.title, priority: suggestion.priority, dueDate: suggestion.dueDate, projectId: suggestion.projectId, status: "inbox" });
+    await removeTaskSuggestion(userId, suggestion.id); setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
+  };
+  const handleDeclineSuggestion = async (suggestion: PendingTaskSuggestion) => {
+    if (!userId) return;
+    await removeTaskSuggestion(userId, suggestion.id); setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
+  };
 
   useEffect(() => {
     loadVaultData();
@@ -119,7 +169,7 @@ export default function VaultScreen() {
         setShowAddMenu(false);
         await addAndIndexContextItem(userId, {
           title: asset.name,
-          type: "document",
+          type: inferContextItemType(asset.mimeType, asset.name),
           uri: asset.uri,
           mimeType: asset.mimeType,
           projectId: selectedProjectId || undefined,
@@ -152,7 +202,7 @@ export default function VaultScreen() {
         setShowAddMenu(false);
         await addAndIndexContextItem(userId, {
           title: asset.fileName || `Photo (${new Date().toLocaleDateString()})`,
-          type: "image",
+          type: inferContextItemType(asset.mimeType, asset.fileName),
           uri: asset.uri,
           mimeType: asset.mimeType,
           projectId: selectedProjectId || undefined,
@@ -219,6 +269,7 @@ export default function VaultScreen() {
 
       <ScrollView
         className="flex-1"
+        overScrollMode="always"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
           paddingBottom: 110,
@@ -300,7 +351,12 @@ export default function VaultScreen() {
                 </View>
 
                 {!isAddingNote ? (
-                  <View className="flex-row gap-2.5">
+                  <View className="gap-3">
+                    <TextInput value={dumpText} onChangeText={setDumpText} placeholder="Dump a thought, then review suggested actions..." placeholderTextColor={colors.muted} multiline style={{ color: colors.ink, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 12, minHeight: 64 }} />
+                    <Pressable onPress={handleDumpText} className="rounded-xl bg-indigo-500/30 p-3">
+                      <Text className="text-center text-xs font-semibold" style={{ color: colors.ink }}>Save Dump & Extract Actions</Text>
+                    </Pressable>
+                    <View className="flex-row gap-2.5">
                     <Pressable onPress={handlePickDocument} className="flex-1">
                       <LiquidGlass shape="card">
                         <View className="items-center justify-center p-3 gap-1">
@@ -322,6 +378,12 @@ export default function VaultScreen() {
                         </View>
                       </LiquidGlass>
                     </Pressable>
+                    <Pressable onPress={handleDumpAudio} className="flex-1">
+                      <LiquidGlass shape="card"><View className="items-center justify-center p-3 gap-1">
+                        <Mic size={18} color={colors.accent} />
+                        <Text className="text-xs font-semibold" style={{ color: colors.ink }}>{isRecording ? "Stop Dump" : "Audio Dump"}</Text>
+                      </View></LiquidGlass>
+                    </Pressable>
 
                     <Pressable onPress={() => setIsAddingNote(true)} className="flex-1">
                       <LiquidGlass shape="card">
@@ -333,6 +395,7 @@ export default function VaultScreen() {
                         </View>
                       </LiquidGlass>
                     </Pressable>
+                    </View>
                   </View>
                 ) : (
                   <View className="gap-2.5">
@@ -383,6 +446,25 @@ export default function VaultScreen() {
                           Save Note
                         </Text>
                       </Pressable>
+                    </View>
+                  </View>
+                )}
+
+                {suggestions.length > 0 && (
+                  <View className="mb-6">
+                    <Text className="mb-2 text-xs font-semibold tracking-wider uppercase" style={{ color: colors.muted }}>PENDING SUGGESTIONS</Text>
+                    <View className="gap-2">
+                      {suggestions.map((suggestion) => (
+                        <LiquidGlass key={suggestion.id} shape="card">
+                          <View className="p-3">
+                            <Text className="text-sm font-semibold" style={{ color: colors.ink }}>{suggestion.title}</Text>
+                            <View className="mt-2 flex-row gap-2">
+                              <Pressable onPress={() => handleAcceptSuggestion(suggestion)} className="rounded-full bg-indigo-500/30 px-3 py-1.5"><Text className="text-xs font-semibold" style={{ color: colors.ink }}>Accept</Text></Pressable>
+                              <Pressable onPress={() => handleDeclineSuggestion(suggestion)} className="rounded-full bg-white/10 px-3 py-1.5"><Text className="text-xs font-semibold" style={{ color: colors.muted }}>Decline</Text></Pressable>
+                            </View>
+                          </View>
+                        </LiquidGlass>
+                      ))}
                     </View>
                   </View>
                 )}
@@ -550,8 +632,10 @@ export default function VaultScreen() {
                 >
                   <LiquidGlass shape="card">
                     <View className="flex-row items-center justify-between p-4">
-                      <View className="mr-3.5 h-10 w-10 items-center justify-center rounded-xl bg-white/5">
-                        {getItemIcon(item.type)}
+                      <View className="mr-3.5 h-10 w-10 items-center justify-center rounded-xl bg-white/5 overflow-hidden">
+                        {item.type === "image" && item.uri ? (
+                          <Image source={{ uri: item.uri }} style={{ width: 40, height: 40 }} />
+                        ) : getItemIcon(item.type)}
                       </View>
 
                       <View className="flex-1 pr-2">

@@ -79,10 +79,16 @@ export async function understandDocument(
 }
 
 export async function understandImage(
-  _imageUri: string,
+  imageBase64: string,
+  mimeType: string,
   title?: string
 ): Promise<{ summary: string }> {
+  if (!imageBase64 || !mimeType) {
+    throw new AiServiceError("Image data is unavailable", "MALFORMED_RESPONSE");
+  }
   const result = await invokeAiProxy<{ summary: string }>("understand_image", {
+    imageBase64,
+    mimeType,
     title,
   });
 

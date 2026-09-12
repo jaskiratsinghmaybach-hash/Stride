@@ -43,7 +43,7 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <ScrollView
+      <ScrollView overScrollMode="always"
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,

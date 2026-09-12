@@ -72,13 +72,28 @@ async function runExtractionAndQueue(userId: string, item: ContextItem): Promise
 
     // Enqueue appropriate AI job
     if (item.type === "image") {
+      if (!item.uri || !item.mimeType) {
+        await updateContextItem(userId, item.id, { aiState: "unavailable" });
+        return;
+      }
+      let imageBase64: string;
+      try {
+        imageBase64 = await FileSystem.readAsStringAsync(item.uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+      } catch (error) {
+        console.warn("[Indexing] Failed reading image for understanding", error);
+        await updateContextItem(userId, item.id, { aiState: "unavailable" });
+        return;
+      }
       await enqueueAiJob(userId, {
         id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         type: "understand_image",
         priority: "normal",
         payload: {
           contextId: item.id,
-          uri: item.uri,
+          imageBase64,
+          mimeType: item.mimeType,
           title: item.title,
         },
       });

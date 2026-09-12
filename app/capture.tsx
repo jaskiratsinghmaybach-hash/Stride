@@ -37,6 +37,7 @@ import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import { createTask } from "@/services/tasks/taskClient";
 import { enqueueAiJob } from "@/services/ai/aiClient";
 import { addAndIndexContextItem } from "@/services/vault/indexing";
+import { inferContextItemType } from "@/types/contextItem";
 
 export default function QuickCaptureModal() {
   const { colors } = useStrideTheme();
@@ -150,7 +151,7 @@ export default function QuickCaptureModal() {
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         await addAndIndexContextItem(userId, {
-          type: "image",
+          type: inferContextItemType(asset.mimeType, asset.fileName),
           title: asset.fileName || `Photo (${new Date().toLocaleDateString()})`,
           uri: asset.uri,
           mimeType: asset.mimeType || "image/jpeg",
@@ -174,7 +175,7 @@ export default function QuickCaptureModal() {
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
         await addAndIndexContextItem(userId, {
-          type: "document",
+          type: inferContextItemType(asset.mimeType, asset.name),
           title: asset.name,
           uri: asset.uri,
           mimeType: asset.mimeType || "application/octet-stream",

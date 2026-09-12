@@ -134,10 +134,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       return {};
     } catch (error) {
-      const message =
+      console.error("[Google Sign-In Error]:", error);
+      const rawMessage =
         error instanceof Error ? error.message : "Google sign-in failed.";
 
-      return { error: message };
+      let userMessage = rawMessage;
+      if (rawMessage.includes("DEVELOPER_ERROR")) {
+        userMessage =
+          "Google Sign-In DEVELOPER_ERROR: The Android SHA-1 fingerprint is missing in Firebase / Google Cloud Console, or the Web Client ID in .env does not match.";
+      }
+
+      return { error: userMessage };
     }
   }, []);
 

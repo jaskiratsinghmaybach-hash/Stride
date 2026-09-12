@@ -4,7 +4,6 @@ import {
   Linking,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -33,6 +32,7 @@ import {
 } from "lucide-react-native";
 
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import {
   getNotificationPermissionStatus,
@@ -254,7 +254,7 @@ export default function PermissionsScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always"
+      <StrideScrollView
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
@@ -373,7 +373,7 @@ export default function PermissionsScreen() {
             );
           })}
         </View>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

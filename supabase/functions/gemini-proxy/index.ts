@@ -135,40 +135,57 @@ serve(async (req) => {
     // 4. Construct real Vertex AI endpoint (draws directly from Google Cloud credits)
     const vertexEndpoint = `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${location}/publishers/google/models/gemini-2.5-flash:generateContent`;
 
+    const STRIDE_BASE =
+      "You are Stride, a warm and genuinely attentive companion for the user's day. You notice what matters to them and react like someone who's actually paying attention — not a neutral report generator. Stay concise. Don't perform enthusiasm for routine content, but when something is a real achievement, milestone, or win, say so plainly and warmly — a brief, genuine acknowledgment, not a paragraph of hype. Never invent dates or facts that were not mentioned.";
+
     let prompt = "";
-    let systemInstruction = "You are Stride AI, an intelligent executive productivity engine.";
+    let systemInstruction = STRIDE_BASE;
+    let temperature = 0.45;
+    let contents: Array<{ role: string; parts: unknown[] }>;
 
     if (action === "understand_document") {
-      systemInstruction += " Helpfully and warmly understand the document while staying grounded in its contents. Return a concise summary of key commitments, dates, and takeaways; say when something is unclear.";
+      systemInstruction +=
+        " If this note or document describes an accomplishment, milestone, or personal best, acknowledge it briefly and specifically — reference the actual numbers and details, don't just say 'great job.' If it's routine content (a grocery list, a meeting note), stay calm and useful without forcing enthusiasm that doesn't fit. Never invent dates or facts that were not mentioned.";
       prompt = `Document Title: ${payload.title || "Untitled"}\n\nContent:\n${payload.text}\n\nProvide a summary under 3 sentences. Return JSON with format: {"summary": string, "extractedDates": string[]}`;
+      contents = [{ role: "user", parts: [{ text: prompt }] }];
     } else if (action === "understand_image") {
-      systemInstruction += " Helpfully and warmly understand the image while staying honest about what is visible. Summarize visible text, action items, or whiteboard notes; do not infer details that cannot be seen.";
-      prompt = `Image context title: ${payload.title || "Image"}. Return JSON with format: {"summary": string}`;
+      if (!payload?.imageBase64) {
+        return new Response(
+          JSON.stringify({ error: "imageBase64 is required for understand_image", code: "MISSING_IMAGE" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      systemInstruction +=
+        " If the image shows a personal achievement (a workout log, a completed project, a milestone), acknowledge what you actually see. If it's a document, receipt, or reference material, summarize what's useful from it. Never invent dates or facts that were not mentioned.";
+      prompt = `Image context title: ${payload.title || "Image"}. Describe what is actually visible. Return JSON with format: {"summary": string}`;
+      // Vertex generateContent REST JSON uses camelCase inlineData / mimeType
+      // (not the Developer API curl convention inline_data / mime_type).
+      contents = [{
+        role: "user",
+        parts: [
+          { text: prompt },
+          { inlineData: { mimeType: payload.mimeType || "image/jpeg", data: payload.imageBase64 } },
+        ],
+      }];
     } else if (action === "extract_actions") {
-      systemInstruction = "You are Stride AI. Extract actionable tasks precisely and neutrally. Never invent dates or commitments that were not mentioned.";
+      systemInstruction =
+        "Extract actionable tasks from freeform text. Be fast and accurate. Never invent dates that were not mentioned.";
+      temperature = 0.2;
       prompt = `Freeform text: "${payload.freeText}"\n\nReturn JSON array of items: [{"title": string, "project"?: string, "dueDate"?: string, "priority": "low"|"normal"|"high"}]`;
+      contents = [{ role: "user", parts: [{ text: prompt }] }];
     } else if (action === "build_daily_plan") {
-      systemInstruction += " Given tasks and user schedule, order tasks logically.";
+      systemInstruction += " Given tasks and user schedule, order tasks logically. Never invent dates or facts that were not mentioned.";
       prompt = `Tasks: ${JSON.stringify(payload.tasks)}\nProfile rhythm: ${JSON.stringify(payload.profile)}\n\nReturn JSON: {"orderedTaskIds": string[], "note": string}`;
+      contents = [{ role: "user", parts: [{ text: prompt }] }];
     } else if (action === "suggest_related_context") {
-      systemInstruction += " Identify which analyzed context items genuinely relate to the given task.";
+      systemInstruction += " Identify which analyzed context items genuinely relate to the given task. Never invent dates or facts that were not mentioned.";
       prompt = `Task: ${payload.taskTitle}\nDescription: ${payload.taskDesc || "None"}\n\nAvailable Context Items:\n${JSON.stringify(payload.candidates)}\n\nReturn JSON: {"relatedContextIds": string[], "reasoning": string}`;
+      contents = [{ role: "user", parts: [{ text: prompt }] }];
     } else {
       return new Response(JSON.stringify({ error: "Unknown action" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
-
-    const parts: Array<Record<string, unknown>> = [{ text: prompt }];
-    if (action === "understand_image") {
-      if (!payload.imageBase64 || !payload.mimeType) {
-        return new Response(JSON.stringify({ error: "Image data is unavailable" }), {
-          status: 422,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      parts.push({ inlineData: { mimeType: payload.mimeType, data: payload.imageBase64 } });
     }
 
     const vertexRes = await fetch(vertexEndpoint, {
@@ -178,11 +195,11 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts }],
+        contents,
         systemInstruction: { parts: [{ text: systemInstruction }] },
         generationConfig: {
           responseMimeType: "application/json",
-          temperature: 0.2,
+          temperature,
         },
       }),
     });

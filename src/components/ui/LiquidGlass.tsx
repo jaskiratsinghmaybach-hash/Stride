@@ -26,9 +26,13 @@ export function LiquidGlass({
   tone = "default",
   style,
   innerStyle,
-  intensity = 34,
+  intensity,
 }: Props) {
   const { colors } = useStrideTheme();
+  // Android BlurView cost scales with intensity; cap at 20 even when callers
+  // pass a higher iOS-oriented value (tab bar used 42). iOS keeps the request.
+  const resolvedIntensity =
+    Platform.OS === "android" ? Math.min(intensity ?? 18, 20) : (intensity ?? 34);
   const radius = shape === "pill" ? 999 : 22;
   const backgroundTint =
     tone === "active"
@@ -46,11 +50,7 @@ export function LiquidGlass({
 
   return (
     <View style={[{ borderRadius: radius, overflow: "hidden" }, style]}>
-      <BlurView
-        intensity={Platform.OS === "android" ? Math.min(intensity, 18) : intensity}
-        tint="dark"
-        style={StyleSheet.absoluteFill}
-      />
+      <BlurView intensity={resolvedIntensity} tint="dark" style={StyleSheet.absoluteFill} />
       <LinearGradient
         colors={[colors.glassHighlight, "rgba(255,255,255,0)"]}
         start={{ x: 0.1, y: 0 }}

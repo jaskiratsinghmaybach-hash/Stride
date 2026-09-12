@@ -18,8 +18,8 @@ import {
 } from "./aiClient";
 import * as vertexClient from "./vertexClient";
 import { updateContextItem, getContextItems, relateContextToTask } from "../vault/vaultClient";
-import { getTask } from "../tasks/taskClient";
-import { addTaskSuggestions } from "../tasks/taskSuggestions";
+import { createTask, getTask } from "../tasks/taskClient";
+import { addPendingSuggestions } from "../vault/pendingSuggestions";
 import type { TaskPriority } from "@/types/task";
 
 const MAX_AI_ATTEMPTS = 3;
@@ -94,14 +94,15 @@ async function processSingleJob(userId: string, job: AiJob): Promise<void> {
       }
 
       case "understand_image": {
-        const imageBase64 = payload.imageBase64;
-        const mimeType = payload.mimeType;
         const title = payload.title;
         const contextId = payload.contextId;
+        const imageBase64 = payload.imageBase64;
+        const mimeType = payload.mimeType || "image/jpeg";
 
-        if (!imageBase64 || !mimeType) {
-          throw new Error("Image data is unavailable; refusing filename-only analysis");
+        if (!imageBase64) {
+          throw new Error("understand_image job missing imageBase64");
         }
+
         const res = await vertexClient.understandImage(imageBase64, mimeType, title);
 
         if (contextId) {
@@ -109,6 +110,31 @@ async function processSingleJob(userId: string, job: AiJob): Promise<void> {
             aiState: "analyzed",
             aiSummary: res.summary,
           });
+        }
+        await incrementAiDailyUsage(userId);
+        await removeAiJobsFromQueue(userId, [job.id]);
+        break;
+      }
+
+      case "suggest_actions": {
+        const freeText = payload.rawText || payload.freeText || "";
+        const contextId = payload.contextId as string | undefined;
+        if (freeText.trim()) {
+          const actions = await vertexClient.extractActions(freeText);
+          addPendingSuggestions(
+            actions
+              .filter((item) => item.title)
+              .map((item) => ({
+                id: `sug_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                title: item.title,
+                details: [item.project, item.dueDate].filter(Boolean).join(" · ") || undefined,
+                project: item.project,
+                dueDate: item.dueDate,
+                priority:
+                  item.priority === "high" || item.priority === "low" ? item.priority : "normal",
+                contextId,
+              }))
+          );
         }
         await incrementAiDailyUsage(userId);
         await removeAiJobsFromQueue(userId, [job.id]);
@@ -123,14 +149,13 @@ async function processSingleJob(userId: string, job: AiJob): Promise<void> {
             if (item.title) {
               const priority: TaskPriority =
                 item.priority === "high" || item.priority === "low" ? item.priority : "normal";
-              await addTaskSuggestions(userId, [{
-                id: `suggestion_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              await createTask(userId, {
                 title: item.title,
                 priority,
                 dueDate: item.dueDate || undefined,
                 projectId: item.project || undefined,
-                createdAt: new Date().toISOString(),
-              }]);
+                status: "inbox",
+              });
             }
           }
         }

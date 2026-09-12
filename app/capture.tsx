@@ -37,7 +37,7 @@ import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import { createTask } from "@/services/tasks/taskClient";
 import { enqueueAiJob } from "@/services/ai/aiClient";
 import { addAndIndexContextItem } from "@/services/vault/indexing";
-import { inferContextItemType } from "@/types/contextItem";
+import { inferContextItemType } from "@/services/vault/fileTypeUtils";
 
 export default function QuickCaptureModal() {
   const { colors } = useStrideTheme();
@@ -60,14 +60,12 @@ export default function QuickCaptureModal() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     try {
-      // 1. Save low-friction task directly to storage
       const newTask = await createTask(userId, {
         title: text,
         status: "inbox",
         priority: "normal",
       });
 
-      // 2. Enqueue extract_actions job to AI queue
       await enqueueAiJob(userId, {
         id: `capture_${Date.now()}`,
         type: "extract_actions",
@@ -86,7 +84,6 @@ export default function QuickCaptureModal() {
     if (!userId) return;
 
     if (isRecording) {
-      // Stop recording
       try {
         setIsRecording(false);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -99,6 +96,7 @@ export default function QuickCaptureModal() {
             type: "audio",
             title: `Voice Note (${timestamp})`,
             uri,
+            mimeType: "audio/m4a",
           });
           Alert.alert("Voice Captured", "Voice note saved to your Context Vault.");
           router.back();
@@ -107,7 +105,6 @@ export default function QuickCaptureModal() {
         console.warn("Failed stopping audio recording", err);
       }
     } else {
-      // Start recording
       try {
         const perm = await requestRecordingPermissionsAsync();
         if (!perm.granted) {
@@ -150,9 +147,10 @@ export default function QuickCaptureModal() {
 
       if (!result.canceled && result.assets?.[0]) {
         const asset = result.assets[0];
+        const filename = asset.fileName || `Photo (${new Date().toLocaleDateString()})`;
         await addAndIndexContextItem(userId, {
-          type: inferContextItemType(asset.mimeType, asset.fileName),
-          title: asset.fileName || `Photo (${new Date().toLocaleDateString()})`,
+          type: inferContextItemType(asset.mimeType || "image/jpeg", filename),
+          title: filename,
           uri: asset.uri,
           mimeType: asset.mimeType || "image/jpeg",
         });
@@ -209,7 +207,6 @@ export default function QuickCaptureModal() {
           paddingBottom: Math.max(insets.bottom, 16) + 20,
         }}
       >
-        {/* Modal Top Bar */}
         <View className="flex-row items-center justify-between mb-6">
           <Text
             className="text-xs font-semibold tracking-widest uppercase"
@@ -232,56 +229,54 @@ export default function QuickCaptureModal() {
           </Pressable>
         </View>
 
-        {/* Text Input Surface */}
-        <LiquidGlass shape="card" tone="strong" style={{ minHeight: 180 }}>
-          <View className="p-4 flex-1 justify-between">
+        <LiquidGlass shape="card">
+          <View className="px-5 py-4">
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="What's on your mind? (e.g. Call architect about site survey tomorrow at 2)"
-              placeholderTextColor="rgba(245, 246, 255, 0.45)"
+              placeholder="What's on your mind?"
+              placeholderTextColor={colors.muted}
               multiline
               autoFocus
               style={{
                 color: colors.ink,
-                fontSize: 16,
-                lineHeight: 24,
-                flex: 1,
+                fontSize: 18,
+                lineHeight: 26,
+                minHeight: 52,
                 textAlignVertical: "top",
               }}
             />
-
-            <View className="flex-row items-center justify-between pt-3 border-t border-white/10">
-              <View className="flex-row items-center gap-1.5">
-                <Sparkles size={12} color={colors.accent} />
-                <Text className="text-[11px]" style={{ color: colors.muted }}>
-                  AI extraction will run asynchronously
-                </Text>
-              </View>
-
-              <Pressable
-                onPress={handleSubmit}
-                disabled={!input.trim() || isSubmitting}
-                hitSlop={8}
-              >
-                <LiquidGlass
-                  shape="pill"
-                  tone={input.trim() ? "hero" : "default"}
-                  style={{ opacity: input.trim() ? 1 : 0.4 }}
-                >
-                  <View className="flex-row items-center gap-1.5 px-4 py-2">
-                    <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
-                      Save
-                    </Text>
-                    <ArrowRight size={14} color={colors.ink} />
-                  </View>
-                </LiquidGlass>
-              </Pressable>
-            </View>
           </View>
         </LiquidGlass>
 
-        {/* Multimodal Entry Points */}
+        <View className="mt-3 flex-row items-center justify-between">
+          <View className="flex-row items-center gap-1.5 flex-1 pr-3">
+            <Sparkles size={12} color={colors.accent} />
+            <Text className="text-[11px]" style={{ color: colors.muted }}>
+              AI extraction will run asynchronously
+            </Text>
+          </View>
+
+          <Pressable
+            onPress={handleSubmit}
+            disabled={!input.trim() || isSubmitting}
+            hitSlop={8}
+          >
+            <LiquidGlass
+              shape="pill"
+              tone={input.trim() ? "hero" : "default"}
+              style={{ opacity: input.trim() ? 1 : 0.4 }}
+            >
+              <View className="flex-row items-center gap-1.5 px-4 py-2">
+                <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                  Save
+                </Text>
+                <ArrowRight size={14} color={colors.ink} />
+              </View>
+            </LiquidGlass>
+          </Pressable>
+        </View>
+
         <View className="mt-6">
           <Text
             className="mb-3 text-xs font-semibold tracking-wider uppercase"
@@ -291,7 +286,6 @@ export default function QuickCaptureModal() {
           </Text>
 
           <View className="flex-row gap-3">
-            {/* Voice Button */}
             <Pressable onPress={handleVoiceCapture} className="flex-1">
               <LiquidGlass shape="card" tone={isRecording ? "active" : "default"}>
                 <View className="items-center justify-center p-3.5 gap-1.5">
@@ -314,7 +308,6 @@ export default function QuickCaptureModal() {
               </LiquidGlass>
             </Pressable>
 
-            {/* Photo Button */}
             <Pressable onPress={handlePhotoCapture} className="flex-1">
               <LiquidGlass shape="card">
                 <View className="items-center justify-center p-3.5 gap-1.5">
@@ -326,7 +319,6 @@ export default function QuickCaptureModal() {
               </LiquidGlass>
             </Pressable>
 
-            {/* Document Picker Button */}
             <Pressable onPress={handleDocCapture} className="flex-1">
               <LiquidGlass shape="card">
                 <View className="items-center justify-center p-3.5 gap-1.5">

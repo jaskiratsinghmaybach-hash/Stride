@@ -2,6 +2,7 @@ import * as FileSystem from "expo-file-system";
 import type { ContextItem, ContextItemType } from "@/types/contextItem";
 import { createContextItem, updateContextItem } from "./vaultClient";
 import { enqueueAiJob } from "../ai/aiClient";
+import { copyIntoVaultStorage, prepareImageForAi } from "./fileTypeUtils";
 
 export type AddContextInput = {
   title: string;
@@ -20,18 +21,21 @@ export async function addAndIndexContextItem(
   userId: string,
   input: AddContextInput
 ): Promise<ContextItem> {
-  // 1. Create ContextItem immediately with knowable metadata
+  let uri = input.uri;
+  if (uri) {
+    uri = await copyIntoVaultStorage(uri, input.title);
+  }
+
   const item = await createContextItem(userId, {
     title: input.title,
     type: input.type,
-    uri: input.uri,
+    uri,
     mimeType: input.mimeType,
     notes: input.notes,
     projectId: input.projectId,
     aiState: "not_indexed",
   });
 
-  // 2. Fire indexing pipeline asynchronously without blocking the UI return
   runExtractionAndQueue(userId, item).catch((err) => {
     console.warn("[Indexing] Background extraction failed", err);
   });
@@ -39,11 +43,33 @@ export async function addAndIndexContextItem(
   return item;
 }
 
+export async function enqueueUnderstandImageJob(
+  userId: string,
+  item: ContextItem
+): Promise<void> {
+  if (!item.uri) {
+    throw new Error("Image has no local URI");
+  }
+
+  const prepared = await prepareImageForAi(item.uri, item.mimeType);
+  await enqueueAiJob(userId, {
+    id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: "understand_image",
+    priority: "normal",
+    payload: {
+      contextId: item.id,
+      uri: item.uri,
+      title: item.title,
+      imageBase64: prepared.imageBase64,
+      mimeType: prepared.mimeType,
+    },
+  });
+}
+
 async function runExtractionAndQueue(userId: string, item: ContextItem): Promise<void> {
   try {
     let extractedText: string | undefined = undefined;
 
-    // Document text extraction
     if (item.type === "document" && item.uri) {
       try {
         const isTextCandidate =
@@ -62,41 +88,22 @@ async function runExtractionAndQueue(userId: string, item: ContextItem): Promise
       }
     } else if (item.type === "note" && item.notes) {
       extractedText = item.notes;
+    } else if (item.notes) {
+      extractedText = item.notes;
     }
 
-    // Update item with extracted text and transition to 'analyzing'
-    const updated = await updateContextItem(userId, item.id, {
+    await updateContextItem(userId, item.id, {
       extractedText,
       aiState: "analyzing",
     });
 
-    // Enqueue appropriate AI job
     if (item.type === "image") {
-      if (!item.uri || !item.mimeType) {
-        await updateContextItem(userId, item.id, { aiState: "unavailable" });
-        return;
-      }
-      let imageBase64: string;
       try {
-        imageBase64 = await FileSystem.readAsStringAsync(item.uri, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      } catch (error) {
-        console.warn("[Indexing] Failed reading image for understanding", error);
+        await enqueueUnderstandImageJob(userId, item);
+      } catch (imgErr) {
+        console.warn("[Indexing] Image bytes unavailable for AI", imgErr);
         await updateContextItem(userId, item.id, { aiState: "unavailable" });
-        return;
       }
-      await enqueueAiJob(userId, {
-        id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        type: "understand_image",
-        priority: "normal",
-        payload: {
-          contextId: item.id,
-          imageBase64,
-          mimeType: item.mimeType,
-          title: item.title,
-        },
-      });
     } else if (item.type === "document" || item.type === "note") {
       await enqueueAiJob(userId, {
         id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,

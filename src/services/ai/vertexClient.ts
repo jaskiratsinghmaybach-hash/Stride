@@ -83,13 +83,14 @@ export async function understandImage(
   mimeType: string,
   title?: string
 ): Promise<{ summary: string }> {
-  if (!imageBase64 || !mimeType) {
-    throw new AiServiceError("Image data is unavailable", "MALFORMED_RESPONSE");
+  if (!imageBase64) {
+    throw new AiServiceError("Image bytes were not provided", "MALFORMED_RESPONSE");
   }
+
   const result = await invokeAiProxy<{ summary: string }>("understand_image", {
-    imageBase64,
-    mimeType,
     title,
+    imageBase64,
+    mimeType: mimeType || "image/jpeg",
   });
 
   if (!result.summary) {

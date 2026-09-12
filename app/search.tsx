@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import {
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -22,6 +21,7 @@ import {
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { SearchResults } from "@/services/search/searchClient";
 import { searchLocalStride } from "@/services/search/searchClient";
@@ -117,7 +117,7 @@ export default function SearchScreen() {
         </View>
 
         {/* Results List */}
-        <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+        <StrideScrollView className="flex-1" showsVerticalScrollIndicator={false}>
           {query.trim().length > 0 && (
             <View className="mb-4">
               <Text className="text-xs" style={{ color: colors.muted }}>
@@ -282,7 +282,7 @@ export default function SearchScreen() {
               </View>
             </LiquidGlass>
           </View>
-        </ScrollView>
+        </StrideScrollView>
       </View>
     </View>
   );

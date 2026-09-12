@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
+  Image,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
-  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
@@ -16,38 +15,51 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import * as Haptics from "expo-haptics";
-import { useAudioRecorder, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from "expo-audio";
 import {
   Archive,
   ArrowRight,
   Camera,
+  Check,
   FileCode,
-  FileImage,
   FileText,
+  FileType,
   Folder,
   FolderPlus,
   Layers,
   Mic,
   Plus,
   Sparkles,
+  Square,
   X,
 } from "lucide-react-native";
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { ContextItem, ContextItemType } from "@/types/contextItem";
-import { inferContextItemType } from "@/types/contextItem";
 import type { Project } from "@/types/project";
 import {
   createProject,
   getContextItems,
   getProjects,
+  relateContextToTask,
 } from "@/services/vault/vaultClient";
 import { addAndIndexContextItem } from "@/services/vault/indexing";
+import { inferContextItemType, inferDocumentFormat } from "@/services/vault/fileTypeUtils";
+import {
+  subscribePendingSuggestions,
+  removePendingSuggestion,
+  type PendingTaskSuggestion,
+} from "@/services/vault/pendingSuggestions";
 import { enqueueAiJob } from "@/services/ai/aiClient";
 import { createTask } from "@/services/tasks/taskClient";
-import { getTaskSuggestions, removeTaskSuggestion, type PendingTaskSuggestion } from "@/services/tasks/taskSuggestions";
 
 const FILTER_TABS: Array<{ id: ContextItemType | "all"; label: string }> = [
   { id: "all", label: "All" },
@@ -64,6 +76,7 @@ export default function VaultScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const userId = session?.user?.id;
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
   const [isLoading, setIsLoading] = useState(true);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -71,19 +84,25 @@ export default function VaultScreen() {
   const [activeFilter, setActiveFilter] = useState<ContextItemType | "all">("all");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
 
-  // Quick inline project create state
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
 
-  // Context add menu state
   const [showAddMenu, setShowAddMenu] = useState(false);
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [noteTitle, setNoteTitle] = useState("");
   const [noteContent, setNoteContent] = useState("");
+  const [fabOpen, setFabOpen] = useState(false);
+
+  const [showDump, setShowDump] = useState(false);
   const [dumpText, setDumpText] = useState("");
+  const [dumpImage, setDumpImage] = useState<{ uri: string; mimeType?: string; name?: string } | null>(null);
+  const [dumpAudioUri, setDumpAudioUri] = useState<string | null>(null);
+  const [isDumpRecording, setIsDumpRecording] = useState(false);
+  const [isDumpSubmitting, setIsDumpSubmitting] = useState(false);
+
   const [suggestions, setSuggestions] = useState<PendingTaskSuggestion[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  const tabClearance = Math.max(16, insets.bottom + 6) + 72;
 
   const loadVaultData = useCallback(async () => {
     if (!userId) {
@@ -97,7 +116,6 @@ export default function VaultScreen() {
       ]);
       setProjects(projs);
       setItems(allItems);
-      setSuggestions(await getTaskSuggestions(userId));
     } catch (err) {
       console.warn("Error loading vault", err);
     } finally {
@@ -105,48 +123,13 @@ export default function VaultScreen() {
     }
   }, [userId]);
 
-  const handleDumpText = async () => {
-    if (!userId || !dumpText.trim()) return;
-    const item = await addAndIndexContextItem(userId, {
-      title: `Dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`,
-      type: "note", notes: dumpText.trim(), projectId: selectedProjectId || undefined,
-    });
-    await enqueueAiJob(userId, { id: `dump_${Date.now()}`, type: "extract_actions", priority: "normal", payload: { contextId: item.id, rawText: dumpText.trim() } });
-    setDumpText(""); setShowAddMenu(false); await loadVaultData();
-  };
-
-  const handleDumpAudio = async () => {
-    if (!userId) return;
-    try {
-      if (!isRecording) {
-        const permission = await requestRecordingPermissionsAsync();
-        if (!permission.granted) { Alert.alert("Microphone Permission", "Enable microphone access to record a Dump."); return; }
-        await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-        await recorder.prepareToRecordAsync(); recorder.record(); setIsRecording(true); return;
-      }
-      await recorder.stop(); setIsRecording(false);
-      if (recorder.uri) {
-        const item = await addAndIndexContextItem(userId, { title: `Audio Dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`, type: "audio", uri: recorder.uri, projectId: selectedProjectId || undefined });
-        await enqueueAiJob(userId, { id: `dump_${Date.now()}`, type: "extract_actions", priority: "normal", payload: { contextId: item.id, rawText: "" } });
-        Alert.alert("Dump saved", "Audio is stored as raw audio. Speech-to-text is unavailable, so no actions were inferred.");
-        setShowAddMenu(false); await loadVaultData();
-      }
-    } catch (error) { console.warn("Failed recording Vault dump", error); setIsRecording(false); }
-  };
-
-  const handleAcceptSuggestion = async (suggestion: PendingTaskSuggestion) => {
-    if (!userId) return;
-    await createTask(userId, { title: suggestion.title, priority: suggestion.priority, dueDate: suggestion.dueDate, projectId: suggestion.projectId, status: "inbox" });
-    await removeTaskSuggestion(userId, suggestion.id); setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
-  };
-  const handleDeclineSuggestion = async (suggestion: PendingTaskSuggestion) => {
-    if (!userId) return;
-    await removeTaskSuggestion(userId, suggestion.id); setSuggestions((current) => current.filter((item) => item.id !== suggestion.id));
-  };
-
   useEffect(() => {
     loadVaultData();
   }, [loadVaultData]);
+
+  useEffect(() => {
+    return subscribePendingSuggestions(setSuggestions);
+  }, []);
 
   const handleCreateProject = async () => {
     if (!userId || !newProjectName.trim()) return;
@@ -167,6 +150,7 @@ export default function VaultScreen() {
       if (!res.canceled && res.assets?.[0]) {
         const asset = res.assets[0];
         setShowAddMenu(false);
+        setFabOpen(false);
         await addAndIndexContextItem(userId, {
           title: asset.name,
           type: inferContextItemType(asset.mimeType, asset.name),
@@ -199,10 +183,12 @@ export default function VaultScreen() {
 
       if (!res.canceled && res.assets?.[0]) {
         const asset = res.assets[0];
+        const filename = asset.fileName || `Photo (${new Date().toLocaleDateString()})`;
         setShowAddMenu(false);
+        setFabOpen(false);
         await addAndIndexContextItem(userId, {
-          title: asset.fileName || `Photo (${new Date().toLocaleDateString()})`,
-          type: inferContextItemType(asset.mimeType, asset.fileName),
+          title: filename,
+          type: inferContextItemType(asset.mimeType || "image/jpeg", filename),
           uri: asset.uri,
           mimeType: asset.mimeType,
           projectId: selectedProjectId || undefined,
@@ -235,25 +221,171 @@ export default function VaultScreen() {
     }
   };
 
+  const handleDumpImage = async () => {
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Photos Permission", "Enable photo access to attach an image to this dump.");
+        return;
+      }
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+      if (!res.canceled && res.assets?.[0]) {
+        const asset = res.assets[0];
+        setDumpImage({
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          name: asset.fileName || undefined,
+        });
+      }
+    } catch (err) {
+      console.warn("Dump image pick failed", err);
+    }
+  };
+
+  const handleDumpVoice = async () => {
+    if (isDumpRecording) {
+      try {
+        setIsDumpRecording(false);
+        await recorder.stop();
+        if (recorder.uri) setDumpAudioUri(recorder.uri);
+      } catch (err) {
+        console.warn("Dump recording stop failed", err);
+      }
+      return;
+    }
+    try {
+      const perm = await requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Microphone Permission", "Enable microphone access to attach a voice note.");
+        return;
+      }
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      setIsDumpRecording(true);
+    } catch (err) {
+      console.warn("Dump recording start failed", err);
+    }
+  };
+
+  const handleDumpSubmit = async () => {
+    if (!userId || isDumpSubmitting) return;
+    const text = dumpText.trim();
+    if (!text && !dumpImage && !dumpAudioUri) return;
+
+    setIsDumpSubmitting(true);
+    try {
+      let created: ContextItem | null = null;
+
+      if (dumpImage) {
+        const filename = dumpImage.name || `Dump photo (${new Date().toLocaleDateString()})`;
+        created = await addAndIndexContextItem(userId, {
+          title: text ? text.slice(0, 72) : filename,
+          type: inferContextItemType(dumpImage.mimeType || "image/jpeg", filename),
+          uri: dumpImage.uri,
+          mimeType: dumpImage.mimeType,
+          notes: text || undefined,
+          projectId: selectedProjectId || undefined,
+        });
+      } else if (dumpAudioUri) {
+        created = await addAndIndexContextItem(userId, {
+          title: text ? text.slice(0, 72) : `Voice dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`,
+          type: "audio",
+          uri: dumpAudioUri,
+          mimeType: "audio/m4a",
+          notes: text || undefined,
+          projectId: selectedProjectId || undefined,
+        });
+      } else {
+        created = await addAndIndexContextItem(userId, {
+          title: text.slice(0, 72),
+          type: "note",
+          notes: text,
+          projectId: selectedProjectId || undefined,
+        });
+      }
+
+      if (dumpImage && dumpAudioUri) {
+        await addAndIndexContextItem(userId, {
+          title: `Voice dump (${new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})`,
+          type: "audio",
+          uri: dumpAudioUri,
+          mimeType: "audio/m4a",
+          projectId: selectedProjectId || undefined,
+        });
+      }
+
+      if (text) {
+        await enqueueAiJob(userId, {
+          id: `dump_${Date.now()}`,
+          type: "suggest_actions",
+          priority: "normal",
+          payload: { rawText: text, contextId: created?.id },
+        });
+      }
+
+      setDumpText("");
+      setDumpImage(null);
+      setDumpAudioUri(null);
+      setShowDump(false);
+      setFabOpen(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      await loadVaultData();
+    } catch (err) {
+      console.warn("Dump submit failed", err);
+    } finally {
+      setIsDumpSubmitting(false);
+    }
+  };
+
+  const handleAcceptSuggestion = async (suggestion: PendingTaskSuggestion) => {
+    if (!userId) return;
+    const task = await createTask(userId, {
+      title: suggestion.title,
+      status: "inbox",
+      priority: suggestion.priority,
+      dueDate: suggestion.dueDate,
+      projectId: suggestion.project?.startsWith("proj_") ? suggestion.project : undefined,
+    });
+    if (suggestion.contextId) {
+      await relateContextToTask(userId, suggestion.contextId, task.id);
+    }
+    removePendingSuggestion(suggestion.id);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+  };
+
   const filteredItems = items.filter((item) => {
     const matchesType = activeFilter === "all" || item.type === activeFilter;
     const matchesProject = !selectedProjectId || item.projectId === selectedProjectId;
     return matchesType && matchesProject;
   });
 
-  const getItemIcon = (type: ContextItemType) => {
-    switch (type) {
-      case "document":
-        return <FileText size={18} color={colors.accent} />;
-      case "image":
-        return <FileImage size={18} color={colors.accent} />;
-      case "note":
-        return <FileCode size={18} color={colors.accent} />;
-      case "audio":
-        return <Mic size={18} color={colors.accent} />;
-      default:
-        return <Archive size={18} color={colors.accent} />;
+  const getItemIcon = (item: ContextItem) => {
+    if (item.type === "image" && item.uri) {
+      return (
+        <Image
+          source={{ uri: item.uri }}
+          style={{ width: 40, height: 40, borderRadius: 12 }}
+        />
+      );
     }
+    if (item.type === "note") {
+      return <FileCode size={18} color={colors.spark} />;
+    }
+    if (item.type === "audio") {
+      return <Mic size={18} color={colors.accent} />;
+    }
+    if (item.type === "document") {
+      const format = inferDocumentFormat(item.mimeType, item.title);
+      if (format === "pdf") return <FileText size={18} color={colors.accent} />;
+      if (format === "docx") return <FileType size={18} color={colors.accent} />;
+      return <FileText size={18} color={colors.accent} />;
+    }
+    return <Archive size={18} color={colors.accent} />;
   };
 
   return (
@@ -267,12 +399,11 @@ export default function VaultScreen() {
         />
       </View>
 
-      <ScrollView
+      <StrideScrollView
         className="flex-1"
-        overScrollMode="always"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
-          paddingBottom: 110,
+          paddingBottom: tabClearance + 88,
           paddingHorizontal: 20,
         }}
         showsVerticalScrollIndicator={false}
@@ -284,59 +415,21 @@ export default function VaultScreen() {
           />
         }
       >
-        {/* Header */}
-        <View className="mb-6 flex-row items-center justify-between">
-          <View>
-            <Text
-              className="text-xs font-semibold tracking-widest uppercase"
-              style={{ color: colors.muted }}
-            >
-              KNOWLEDGE BASE
-            </Text>
-            <Text
-              className="mt-1 text-2xl font-bold tracking-tight"
-              style={{ color: colors.ink }}
-            >
-              Context Vault
-            </Text>
-          </View>
-
-          <View className="flex-row items-center gap-2">
-            <Pressable
-              onPress={() => setShowAddMenu(!showAddMenu)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="Add context"
-            >
-              <LiquidGlass shape="pill" tone="hero" intensity={28}>
-                <View className="flex-row items-center gap-1.5 px-3 py-2">
-                  <Plus size={16} color={colors.ink} />
-                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
-                    Add
-                  </Text>
-                </View>
-              </LiquidGlass>
-            </Pressable>
-
-            <Pressable
-              onPress={() => setIsAddingProject(!isAddingProject)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel="New project"
-            >
-              <LiquidGlass shape="pill" intensity={28}>
-                <View className="flex-row items-center gap-1.5 px-3 py-2">
-                  <FolderPlus size={16} color={colors.ink} />
-                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
-                    Project
-                  </Text>
-                </View>
-              </LiquidGlass>
-            </Pressable>
-          </View>
+        <View className="mb-6">
+          <Text
+            className="text-xs font-semibold tracking-widest uppercase"
+            style={{ color: colors.muted }}
+          >
+            KNOWLEDGE BASE
+          </Text>
+          <Text
+            className="mt-1 text-2xl font-bold tracking-tight"
+            style={{ color: colors.ink }}
+          >
+            Context Vault
+          </Text>
         </View>
 
-        {/* Add Context Action Dropdown */}
         {showAddMenu && (
           <View className="mb-6">
             <LiquidGlass shape="card" tone="strong">
@@ -351,12 +444,7 @@ export default function VaultScreen() {
                 </View>
 
                 {!isAddingNote ? (
-                  <View className="gap-3">
-                    <TextInput value={dumpText} onChangeText={setDumpText} placeholder="Dump a thought, then review suggested actions..." placeholderTextColor={colors.muted} multiline style={{ color: colors.ink, backgroundColor: "rgba(255,255,255,0.06)", borderRadius: 10, padding: 12, minHeight: 64 }} />
-                    <Pressable onPress={handleDumpText} className="rounded-xl bg-indigo-500/30 p-3">
-                      <Text className="text-center text-xs font-semibold" style={{ color: colors.ink }}>Save Dump & Extract Actions</Text>
-                    </Pressable>
-                    <View className="flex-row gap-2.5">
+                  <View className="flex-row gap-2.5">
                     <Pressable onPress={handlePickDocument} className="flex-1">
                       <LiquidGlass shape="card">
                         <View className="items-center justify-center p-3 gap-1">
@@ -378,24 +466,17 @@ export default function VaultScreen() {
                         </View>
                       </LiquidGlass>
                     </Pressable>
-                    <Pressable onPress={handleDumpAudio} className="flex-1">
-                      <LiquidGlass shape="card"><View className="items-center justify-center p-3 gap-1">
-                        <Mic size={18} color={colors.accent} />
-                        <Text className="text-xs font-semibold" style={{ color: colors.ink }}>{isRecording ? "Stop Dump" : "Audio Dump"}</Text>
-                      </View></LiquidGlass>
-                    </Pressable>
 
                     <Pressable onPress={() => setIsAddingNote(true)} className="flex-1">
                       <LiquidGlass shape="card">
                         <View className="items-center justify-center p-3 gap-1">
-                          <FileCode size={18} color={colors.accent} />
+                          <FileCode size={18} color={colors.spark} />
                           <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
                             Quick Note
                           </Text>
                         </View>
                       </LiquidGlass>
                     </Pressable>
-                    </View>
                   </View>
                 ) : (
                   <View className="gap-2.5">
@@ -449,31 +530,11 @@ export default function VaultScreen() {
                     </View>
                   </View>
                 )}
-
-                {suggestions.length > 0 && (
-                  <View className="mb-6">
-                    <Text className="mb-2 text-xs font-semibold tracking-wider uppercase" style={{ color: colors.muted }}>PENDING SUGGESTIONS</Text>
-                    <View className="gap-2">
-                      {suggestions.map((suggestion) => (
-                        <LiquidGlass key={suggestion.id} shape="card">
-                          <View className="p-3">
-                            <Text className="text-sm font-semibold" style={{ color: colors.ink }}>{suggestion.title}</Text>
-                            <View className="mt-2 flex-row gap-2">
-                              <Pressable onPress={() => handleAcceptSuggestion(suggestion)} className="rounded-full bg-indigo-500/30 px-3 py-1.5"><Text className="text-xs font-semibold" style={{ color: colors.ink }}>Accept</Text></Pressable>
-                              <Pressable onPress={() => handleDeclineSuggestion(suggestion)} className="rounded-full bg-white/10 px-3 py-1.5"><Text className="text-xs font-semibold" style={{ color: colors.muted }}>Decline</Text></Pressable>
-                            </View>
-                          </View>
-                        </LiquidGlass>
-                      ))}
-                    </View>
-                  </View>
-                )}
               </View>
             </LiquidGlass>
           </View>
         )}
 
-        {/* Inline New Project Form */}
         {isAddingProject && (
           <View className="mb-6">
             <LiquidGlass shape="card" tone="active">
@@ -520,7 +581,89 @@ export default function VaultScreen() {
           </View>
         )}
 
-        {/* PROJECTS SECTION */}
+        {showDump && (
+          <View className="mb-6">
+            <LiquidGlass shape="card" tone="strong">
+              <View className="p-4">
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.accent }}>
+                    Vault Dump
+                  </Text>
+                  <Pressable onPress={() => setShowDump(false)} hitSlop={8}>
+                    <X size={16} color={colors.muted} />
+                  </Pressable>
+                </View>
+
+                <LiquidGlass shape="card">
+                  <View className="px-4 py-3">
+                    <TextInput
+                      value={dumpText}
+                      onChangeText={setDumpText}
+                      placeholder="Dump what's on your mind..."
+                      placeholderTextColor={colors.muted}
+                      multiline
+                      style={{
+                        color: colors.ink,
+                        fontSize: 16,
+                        lineHeight: 22,
+                        minHeight: 48,
+                        textAlignVertical: "top",
+                      }}
+                    />
+                  </View>
+                </LiquidGlass>
+
+                <View className="mt-3 flex-row gap-2">
+                  <Pressable onPress={handleDumpVoice} className="flex-1">
+                    <LiquidGlass shape="card" tone={isDumpRecording ? "active" : "default"}>
+                      <View className="items-center py-2.5 gap-1">
+                        {isDumpRecording ? (
+                          <Square size={16} color="#EF4444" fill="#EF4444" />
+                        ) : (
+                          <Mic size={16} color={colors.accent} />
+                        )}
+                        <Text className="text-[11px] font-medium" style={{ color: colors.ink }}>
+                          {isDumpRecording ? "Stop" : dumpAudioUri ? "Voice attached" : "Voice"}
+                        </Text>
+                      </View>
+                    </LiquidGlass>
+                  </Pressable>
+                  <Pressable onPress={handleDumpImage} className="flex-1">
+                    <LiquidGlass shape="card" tone={dumpImage ? "active" : "default"}>
+                      <View className="items-center py-2.5 gap-1">
+                        <Camera size={16} color={colors.accent} />
+                        <Text className="text-[11px] font-medium" style={{ color: colors.ink }}>
+                          {dumpImage ? "Photo attached" : "Image"}
+                        </Text>
+                      </View>
+                    </LiquidGlass>
+                  </Pressable>
+                </View>
+
+                {!dumpText.trim() && dumpAudioUri ? (
+                  <Text className="mt-2 text-[11px]" style={{ color: colors.muted }}>
+                    Voice is saved as audio. There is no transcription yet, so task suggestions need typed text.
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  onPress={handleDumpSubmit}
+                  disabled={isDumpSubmitting || (!dumpText.trim() && !dumpImage && !dumpAudioUri)}
+                  className="mt-3"
+                >
+                  <LiquidGlass shape="pill" tone="hero" style={{ opacity: isDumpSubmitting ? 0.5 : 1 }}>
+                    <View className="items-center py-2.5">
+                      <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                        {isDumpSubmitting ? "Saving…" : "Save dump"}
+                      </Text>
+                    </View>
+                  </LiquidGlass>
+                </Pressable>
+              </View>
+            </LiquidGlass>
+          </View>
+        )}
+
         <View className="mb-6">
           <Text
             className="mb-2.5 text-xs font-semibold tracking-wider uppercase"
@@ -529,9 +672,10 @@ export default function VaultScreen() {
             PROJECTS
           </Text>
 
-          <ScrollView
+          <StrideScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
+            alwaysBounceVertical={false}
             contentContainerStyle={{ gap: 8, paddingRight: 10 }}
           >
             <Pressable onPress={() => setSelectedProjectId(null)}>
@@ -583,14 +727,14 @@ export default function VaultScreen() {
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </StrideScrollView>
         </View>
 
-        {/* SECONDARY FILTER TABS */}
         <View className="mb-4">
-          <ScrollView
+          <StrideScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
+            alwaysBounceVertical={false}
             contentContainerStyle={{ gap: 6 }}
           >
             {FILTER_TABS.map((tab) => {
@@ -618,10 +762,9 @@ export default function VaultScreen() {
                 </Pressable>
               );
             })}
-          </ScrollView>
+          </StrideScrollView>
         </View>
 
-        {/* CONTEXT ITEMS LIST */}
         <View>
           {filteredItems.length > 0 ? (
             <View className="gap-3">
@@ -632,10 +775,16 @@ export default function VaultScreen() {
                 >
                   <LiquidGlass shape="card">
                     <View className="flex-row items-center justify-between p-4">
-                      <View className="mr-3.5 h-10 w-10 items-center justify-center rounded-xl bg-white/5 overflow-hidden">
-                        {item.type === "image" && item.uri ? (
-                          <Image source={{ uri: item.uri }} style={{ width: 40, height: 40 }} />
-                        ) : getItemIcon(item.type)}
+                      <View
+                        className="mr-3.5 h-10 w-10 items-center justify-center rounded-xl overflow-hidden"
+                        style={{
+                          backgroundColor:
+                            item.type === "note"
+                              ? "rgba(255, 139, 107, 0.12)"
+                              : "rgba(255,255,255,0.05)",
+                        }}
+                      >
+                        {getItemIcon(item)}
                       </View>
 
                       <View className="flex-1 pr-2">
@@ -650,7 +799,9 @@ export default function VaultScreen() {
                         <View className="mt-1 flex-row items-center gap-2">
                           <Text
                             className="text-xs uppercase tracking-wide"
-                            style={{ color: colors.muted }}
+                            style={{
+                              color: item.type === "note" ? colors.spark : colors.muted,
+                            }}
                           >
                             {item.type}
                           </Text>
@@ -702,7 +853,124 @@ export default function VaultScreen() {
             </LiquidGlass>
           )}
         </View>
-      </ScrollView>
+      </StrideScrollView>
+
+      {suggestions.length > 0 && (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: "absolute",
+            left: 20,
+            right: 20,
+            bottom: tabClearance + 72,
+            gap: 8,
+          }}
+        >
+          {suggestions.slice(0, 3).map((suggestion) => (
+            <LiquidGlass key={suggestion.id} shape="card" tone="hero">
+              <View className="p-3.5">
+                <Text className="text-[10px] font-bold uppercase tracking-wider mb-1" style={{ color: colors.accent }}>
+                  Stride suggested this
+                </Text>
+                <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
+                  {suggestion.title}
+                </Text>
+                {suggestion.details ? (
+                  <Text className="mt-0.5 text-xs" style={{ color: colors.muted }}>
+                    {suggestion.details}
+                  </Text>
+                ) : null}
+                <View className="mt-3 flex-row gap-2">
+                  <Pressable onPress={() => handleAcceptSuggestion(suggestion)} className="flex-1">
+                    <View className="flex-row items-center justify-center gap-1 rounded-full py-2" style={{ backgroundColor: colors.accent }}>
+                      <Check size={14} color="#12162C" />
+                      <Text className="text-xs font-semibold text-slate-900">Accept</Text>
+                    </View>
+                  </Pressable>
+                  <Pressable onPress={() => removePendingSuggestion(suggestion.id)} className="flex-1">
+                    <View className="flex-row items-center justify-center gap-1 rounded-full py-2 bg-white/10">
+                      <X size={14} color={colors.muted} />
+                      <Text className="text-xs font-semibold" style={{ color: colors.muted }}>Decline</Text>
+                    </View>
+                  </Pressable>
+                </View>
+              </View>
+            </LiquidGlass>
+          ))}
+        </View>
+      )}
+
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: "absolute",
+          right: 20,
+          bottom: tabClearance,
+          alignItems: "flex-end",
+          gap: 8,
+        }}
+      >
+        {fabOpen && (
+          <>
+            <Pressable
+              onPress={() => {
+                setShowDump(true);
+                setShowAddMenu(false);
+                setIsAddingProject(false);
+                setFabOpen(false);
+              }}
+            >
+              <LiquidGlass shape="pill" tone="hero">
+                <View className="flex-row items-center gap-1.5 px-3.5 py-2">
+                  <Sparkles size={14} color={colors.ink} />
+                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>Dump</Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setIsAddingProject(true);
+                setShowAddMenu(false);
+                setShowDump(false);
+                setFabOpen(false);
+              }}
+            >
+              <LiquidGlass shape="pill">
+                <View className="flex-row items-center gap-1.5 px-3.5 py-2">
+                  <FolderPlus size={14} color={colors.ink} />
+                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>Project</Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setShowAddMenu(true);
+                setIsAddingProject(false);
+                setShowDump(false);
+                setFabOpen(false);
+              }}
+            >
+              <LiquidGlass shape="pill">
+                <View className="flex-row items-center gap-1.5 px-3.5 py-2">
+                  <Plus size={14} color={colors.ink} />
+                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>Add</Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+          </>
+        )}
+        <Pressable
+          onPress={() => setFabOpen((open) => !open)}
+          accessibilityRole="button"
+          accessibilityLabel="Vault actions"
+        >
+          <LiquidGlass shape="pill" tone="hero">
+            <View className="h-14 w-14 items-center justify-center">
+              {fabOpen ? <X size={22} color={colors.ink} /> : <Plus size={22} color={colors.ink} />}
+            </View>
+          </LiquidGlass>
+        </Pressable>
+      </View>
     </View>
   );
 }

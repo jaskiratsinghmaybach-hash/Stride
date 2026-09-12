@@ -2,30 +2,28 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as FileSystem from "expo-file-system/legacy";
 import {
   ArrowLeft,
-  Bot,
-  CheckCircle,
-  Clock,
-  ExternalLink,
-  FileText,
   Folder,
   ListPlus,
+  Pencil,
   Sparkles,
+  Trash2,
 } from "lucide-react-native";
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { ContextItem } from "@/types/contextItem";
 import type { Project } from "@/types/project";
@@ -33,6 +31,8 @@ import type { Task } from "@/types/task";
 import { deleteContextItem, getContextItem, getProjects, updateContextItem } from "@/services/vault/vaultClient";
 import { getTasks, createTask } from "@/services/tasks/taskClient";
 import { enqueueAiJob } from "@/services/ai/aiClient";
+import { enqueueUnderstandImageJob } from "@/services/vault/indexing";
+import { isAppOwnedUri, renameOwnedFile } from "@/services/vault/fileTypeUtils";
 
 export default function ContextItemDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -48,6 +48,8 @@ export default function ContextItemDetailScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
 
   const loadItem = useCallback(async () => {
     if (!userId || !id) {
@@ -85,20 +87,20 @@ export default function ContextItemDetailScreen() {
     setStatusNotice("Queuing analysis in AI worker...");
 
     try {
-      const imagePayload = item.type === "image" && item.uri && item.mimeType
-        ? {
-            imageBase64: await FileSystem.readAsStringAsync(item.uri, {
-              encoding: FileSystem.EncodingType.Base64,
-            }),
-            mimeType: item.mimeType,
-          }
-        : {};
-      await enqueueAiJob({
-        id: `job_${Date.now()}`,
-        type: item.type === "image" ? "understand_image" : "understand_document",
-        priority: "normal",
-        payload: { contextId: item.id, title: item.title, ...imagePayload },
-      });
+      if (item.type === "image") {
+        await enqueueUnderstandImageJob(userId, item);
+      } else {
+        await enqueueAiJob(userId, {
+          id: `job_${Date.now()}`,
+          type: "understand_document",
+          priority: "normal",
+          payload: {
+            contextId: item.id,
+            title: item.title,
+            text: item.extractedText || item.notes || item.title,
+          },
+        });
+      }
 
       // Update state honestly to 'analyzing'
       const updated = await updateContextItem(userId, item.id, {
@@ -112,43 +114,6 @@ export default function ContextItemDetailScreen() {
     } finally {
       setIsSummarizing(false);
     }
-  };
-
-  const handleRename = () => {
-    if (!item || !userId) return;
-    Alert.prompt("Rename context", "Give this item a clearer name.", async (value) => {
-      const title = value?.trim();
-      if (!title) return;
-      let nextUri = item.uri;
-      if (item.uri?.startsWith("file://")) {
-        const lastSlash = item.uri.lastIndexOf("/");
-        const oldName = item.uri.slice(lastSlash + 1);
-        const extension = oldName.includes(".") ? oldName.slice(oldName.lastIndexOf(".")) : "";
-        const target = `${item.uri.slice(0, lastSlash + 1)}${title.replace(/[\\/:*?"<>|]/g, "_")}${extension}`;
-        try {
-          await FileSystem.moveAsync({ from: item.uri, to: target });
-          nextUri = target;
-        } catch (error) {
-          console.warn("Unable to rename owned local file", error);
-        }
-      }
-      const updated = await updateContextItem(userId, item.id, { title, uri: nextUri });
-      if (updated) {
-        setItem(updated);
-        setStatusNotice(nextUri === item.uri ? "Name updated locally; the source file could not be renamed." : "Name and local file updated; queued for sync.");
-      }
-    }, "plain-text", item.title);
-  };
-
-  const handleDelete = () => {
-    if (!item || !userId) return;
-    Alert.alert("Delete context item?", "This removes the local item and queues its deletion for sync.", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Delete", style: "destructive", onPress: async () => {
-        await deleteContextItem(userId, item.id);
-        router.back();
-      }},
-    ]);
   };
 
   const handleCreateTaskFromContext = async () => {
@@ -167,6 +132,60 @@ export default function ContextItemDetailScreen() {
     } catch (err) {
       console.warn("Error creating task", err);
     }
+  };
+
+  const handleRename = async () => {
+    if (!item || !userId || !renameValue.trim()) return;
+    const nextTitle = renameValue.trim();
+    try {
+      let notice = `Renamed in-app title to “${nextTitle}”.`;
+      let nextUri = item.uri;
+      if (item.uri && isAppOwnedUri(item.uri)) {
+        const moved = await renameOwnedFile(item.uri, nextTitle);
+        if (moved) {
+          nextUri = moved;
+          notice = `Renamed the in-app record and the file Stride stores to “${nextTitle}”.`;
+        } else {
+          notice = `Updated the in-app title to “${nextTitle}”. The stored file name could not be changed.`;
+        }
+      } else if (item.uri) {
+        notice = `Updated the in-app title to “${nextTitle}”. This file lives outside Stride, so the original filename was left unchanged.`;
+      }
+      const updated = await updateContextItem(userId, item.id, {
+        title: nextTitle,
+        uri: nextUri,
+      });
+      if (updated) setItem(updated);
+      setIsRenaming(false);
+      setStatusNotice(notice);
+    } catch (err) {
+      console.warn("Rename failed", err);
+      setStatusNotice("Rename failed.");
+    }
+  };
+
+  const handleDelete = () => {
+    if (!item || !userId) return;
+    Alert.alert("Delete this item?", "This removes it from your Vault. This cannot be undone.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          const owned = isAppOwnedUri(item.uri);
+          const ok = await deleteContextItem(userId, item.id);
+          if (ok) {
+            router.back();
+            Alert.alert(
+              "Deleted",
+              owned
+                ? "Removed the Vault record and Stride’s local copy of the file."
+                : "Removed the Vault record. The original file outside Stride was not deleted."
+            );
+          }
+        },
+      },
+    ]);
   };
 
   if (isLoading) {
@@ -203,9 +222,8 @@ export default function ContextItemDetailScreen() {
         />
       </View>
 
-      <ScrollView
+      <StrideScrollView
         className="flex-1"
-        overScrollMode="always"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
           paddingBottom: 40,
@@ -240,6 +258,14 @@ export default function ContextItemDetailScreen() {
           {item.title}
         </Text>
 
+        {item.type === "image" && item.uri ? (
+          <Image
+            source={{ uri: item.uri }}
+            style={{ width: "100%", height: 180, borderRadius: 16, marginTop: 16 }}
+            resizeMode="cover"
+          />
+        ) : null}
+
         <View className="mt-2 flex-row items-center gap-3">
           <Text className="text-xs" style={{ color: colors.muted }}>
             Added {new Date(item.createdAt).toLocaleDateString()}
@@ -252,14 +278,6 @@ export default function ContextItemDetailScreen() {
               </Text>
             </View>
           )}
-        </View>
-        <View className="mt-4 flex-row gap-2">
-          <Pressable onPress={handleRename} className="rounded-full bg-white/10 px-3 py-2">
-            <Text className="text-xs font-semibold" style={{ color: colors.ink }}>Rename</Text>
-          </Pressable>
-          <Pressable onPress={handleDelete} className="rounded-full bg-red-500/20 px-3 py-2">
-            <Text className="text-xs font-semibold text-red-200">Delete</Text>
-          </Pressable>
         </View>
 
         {statusNotice && (
@@ -363,21 +381,66 @@ export default function ContextItemDetailScreen() {
               </LiquidGlass>
             </Pressable>
 
-            <Pressable
-              onPress={() =>
-                setStatusNotice("Ask Stride conversational seam ready for Gemini integration.")
-              }
-            >
+            <Pressable onPress={() => {
+              setRenameValue(item.title);
+              setIsRenaming(true);
+            }}>
               <LiquidGlass shape="card">
                 <View className="flex-row items-center justify-between p-3.5">
                   <View className="flex-row items-center gap-3">
-                    <Bot size={18} color={colors.accent} />
+                    <Pencil size={18} color={colors.accent} />
                     <Text className="text-sm font-medium" style={{ color: colors.ink }}>
-                      Ask Stride About This
+                      Rename
                     </Text>
                   </View>
                   <Text className="text-xs" style={{ color: colors.muted }}>
-                    Query
+                    Title{item.uri && isAppOwnedUri(item.uri) ? " + file" : ""}
+                  </Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+
+            {isRenaming && (
+              <LiquidGlass shape="card" tone="active">
+                <View className="p-3.5 gap-2">
+                  <TextInput
+                    value={renameValue}
+                    onChangeText={setRenameValue}
+                    autoFocus
+                    placeholder="New name"
+                    placeholderTextColor={colors.muted}
+                    style={{
+                      color: colors.ink,
+                      backgroundColor: "rgba(255,255,255,0.06)",
+                      borderRadius: 10,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                      fontSize: 14,
+                    }}
+                  />
+                  <View className="flex-row justify-end gap-2">
+                    <Pressable onPress={() => setIsRenaming(false)} className="px-3 py-1.5">
+                      <Text className="text-xs" style={{ color: colors.muted }}>Cancel</Text>
+                    </Pressable>
+                    <Pressable onPress={handleRename} className="px-4 py-1.5 rounded-full" style={{ backgroundColor: colors.accent }}>
+                      <Text className="text-xs font-semibold text-slate-900">Save name</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </LiquidGlass>
+            )}
+
+            <Pressable onPress={handleDelete}>
+              <LiquidGlass shape="card">
+                <View className="flex-row items-center justify-between p-3.5">
+                  <View className="flex-row items-center gap-3">
+                    <Trash2 size={18} color={colors.spark} />
+                    <Text className="text-sm font-medium" style={{ color: colors.ink }}>
+                      Delete
+                    </Text>
+                  </View>
+                  <Text className="text-xs" style={{ color: colors.muted }}>
+                    Confirm
                   </Text>
                 </View>
               </LiquidGlass>
@@ -423,7 +486,7 @@ export default function ContextItemDetailScreen() {
             </LiquidGlass>
           )}
         </View>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

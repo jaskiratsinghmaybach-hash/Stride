@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -20,6 +19,7 @@ import {
 } from "lucide-react-native";
 
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { StrideEntitlement } from "@/services/revenuecat/revenueCatClient";
 import { getEntitlement } from "@/services/revenuecat/revenueCatClient";
@@ -63,7 +63,7 @@ export default function PaywallScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always"
+      <StrideScrollView
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
@@ -211,7 +211,7 @@ export default function PaywallScreen() {
             </View>
           </LiquidGlass>
         </View>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

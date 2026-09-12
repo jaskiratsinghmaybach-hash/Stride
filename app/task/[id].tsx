@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -26,6 +25,7 @@ import {
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { Task, TaskPriority, TaskStatus } from "@/types/task";
 import type { ContextItem } from "@/types/contextItem";
@@ -151,7 +151,8 @@ export default function TaskDetailScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always" className="flex-1"
+      <StrideScrollView
+        className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
           paddingBottom: 40,
@@ -359,7 +360,7 @@ export default function TaskDetailScreen() {
             </LiquidGlass>
           )}
         </View>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

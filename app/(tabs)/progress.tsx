@@ -3,7 +3,6 @@ import {
   Alert,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -25,6 +24,7 @@ import {
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { Task } from "@/types/task";
 import type { FocusSession } from "@/types/focus";
@@ -141,7 +141,7 @@ export default function ProgressScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always"
+      <StrideScrollView
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
@@ -401,7 +401,7 @@ export default function ProgressScreen() {
             </LiquidGlass>
           )}
         </View>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,6 +17,7 @@ import {
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import { useSyncStatus } from "@/hooks/useSyncStatus";
 
@@ -43,7 +44,7 @@ export default function SettingsScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always"
+      <StrideScrollView
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
@@ -298,7 +299,7 @@ export default function SettingsScreen() {
             </View>
           </LiquidGlass>
         </Pressable>
-      </ScrollView>
+      </StrideScrollView>
     </View>
   );
 }

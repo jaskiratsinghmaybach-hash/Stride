@@ -166,6 +166,37 @@ export async function relateContextToProject(
   return updateContextItem(userId, contextId, { projectId });
 }
 
+export async function deleteContextItem(userId: string, id: string): Promise<boolean> {
+  const items = await getContextItems(userId);
+  const target = items.find((item) => item.id === id);
+  if (!target) return false;
+
+  const next = items.filter((item) => item.id !== id);
+  await AsyncStorage.setItem(getContextItemsKey(userId), JSON.stringify(next));
+
+  const { getTasks, updateTask } = await import("../tasks/taskClient");
+  const { deleteOwnedFile } = await import("./fileTypeUtils");
+
+  const tasks = await getTasks(userId);
+  for (const task of tasks) {
+    if (task.relatedContextIds?.includes(id)) {
+      await updateTask(userId, task.id, {
+        relatedContextIds: task.relatedContextIds.filter((cid) => cid !== id),
+      });
+    }
+  }
+
+  await deleteOwnedFile(target.uri);
+
+  enqueueSync(userId, {
+    entity: "context_item",
+    op: "delete",
+    entityId: id,
+  }).then(() => scheduleDebouncedSync(userId)).catch(() => {});
+
+  return true;
+}
+
 export async function relateContextToTask(
   userId: string,
   contextId: string,

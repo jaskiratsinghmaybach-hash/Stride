@@ -15,7 +15,9 @@ function RootContent() {
           animation: "fade",
           contentStyle: { backgroundColor: colors.background },
         }}
-      />
+      >
+        <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
+      </Stack>
     </>
   );
 }

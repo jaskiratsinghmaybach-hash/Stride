@@ -7,7 +7,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -31,6 +30,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import { AnimatedGradientBackground } from "@/components/ui/AnimatedGradientBackground";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 
 type ThemeColors = ReturnType<typeof useStrideTheme>["colors"];
 
@@ -71,7 +71,7 @@ export default function OnboardingScreen() {
   const [pickerMinute, setPickerMinute] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<import("react-native").ScrollView>(null);
   const total = 6;
 
   const canContinue = useMemo(() => {
@@ -199,7 +199,7 @@ export default function OnboardingScreen() {
           </Text>
         </View>
 
-        <ScrollView overScrollMode="always"
+        <StrideScrollView
           ref={scrollRef}
           className="flex-1"
           contentContainerStyle={{
@@ -399,7 +399,7 @@ export default function OnboardingScreen() {
               />
             </View>
           </StepTransition>
-        </ScrollView>
+        </StrideScrollView>
       </View>
 
       <TimePickerModal

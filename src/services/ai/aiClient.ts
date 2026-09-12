@@ -17,6 +17,7 @@ export type AiJobType =
   | "understand_document"
   | "understand_image"
   | "extract_actions"
+  | "suggest_actions"
   | "build_daily_plan"
   | "connect_context";
 

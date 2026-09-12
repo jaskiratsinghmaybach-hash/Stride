@@ -43,9 +43,12 @@ export default function TabLayout() {
   return (
     <Tabs
       tabBar={(props) => <GlassTabBar {...props} />}
+      detachInactiveScreens={false}
       screenOptions={{
         headerShown: false,
         animation: "none",
+        lazy: false,
+        freezeOnBlur: true,
         sceneStyle: { backgroundColor: colors.background },
       }}
     >

@@ -2,7 +2,6 @@ import { useCallback } from "react";
 import {
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -27,6 +26,7 @@ import {
 
 import { useAuth } from "@/auth/AuthProvider";
 import { LiquidGlass } from "@/components/ui/LiquidGlass";
+import { StrideScrollView } from "@/components/ui/StrideScrollView";
 import { useToday } from "@/hooks/useToday";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
 
@@ -64,7 +64,7 @@ export default function TodayScreen() {
         />
       </View>
 
-      <ScrollView overScrollMode="always"
+      <StrideScrollView
         className="flex-1"
         contentContainerStyle={{
           paddingTop: Math.max(insets.top, 16) + 12,
@@ -469,7 +469,7 @@ export default function TodayScreen() {
             </LiquidGlass>
           </Pressable>
         </View>
-      </ScrollView>
+      </StrideScrollView>
 
       {/* FLOATING QUICK CAPTURE AFFORDANCE */}
       <View

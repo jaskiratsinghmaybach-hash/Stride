@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from "react";
-import { StyleSheet, View, type ViewStyle } from "react-native";
+import { Platform, StyleSheet, View, type ViewStyle } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
@@ -46,7 +46,11 @@ export function LiquidGlass({
 
   return (
     <View style={[{ borderRadius: radius, overflow: "hidden" }, style]}>
-      <BlurView intensity={intensity} tint="dark" style={StyleSheet.absoluteFill} />
+      <BlurView
+        intensity={Platform.OS === "android" ? Math.min(intensity, 18) : intensity}
+        tint="dark"
+        style={StyleSheet.absoluteFill}
+      />
       <LinearGradient
         colors={[colors.glassHighlight, "rgba(255,255,255,0)"]}
         start={{ x: 0.1, y: 0 }}

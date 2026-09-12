@@ -139,13 +139,13 @@ serve(async (req) => {
     let systemInstruction = "You are Stride AI, an intelligent executive productivity engine.";
 
     if (action === "understand_document") {
-      systemInstruction += " Analyze the document objectively. Return a concise summary of the key commitments, dates, and takeaways.";
+      systemInstruction += " Helpfully and warmly understand the document while staying grounded in its contents. Return a concise summary of key commitments, dates, and takeaways; say when something is unclear.";
       prompt = `Document Title: ${payload.title || "Untitled"}\n\nContent:\n${payload.text}\n\nProvide a summary under 3 sentences. Return JSON with format: {"summary": string, "extractedDates": string[]}`;
     } else if (action === "understand_image") {
-      systemInstruction += " Analyze this visual context note. Summarize visible text, action items, or whiteboard notes.";
+      systemInstruction += " Helpfully and warmly understand the image while staying honest about what is visible. Summarize visible text, action items, or whiteboard notes; do not infer details that cannot be seen.";
       prompt = `Image context title: ${payload.title || "Image"}. Return JSON with format: {"summary": string}`;
     } else if (action === "extract_actions") {
-      systemInstruction += " Extract actionable tasks from freeform text. Never invent dates that were not mentioned.";
+      systemInstruction = "You are Stride AI. Extract actionable tasks precisely and neutrally. Never invent dates or commitments that were not mentioned.";
       prompt = `Freeform text: "${payload.freeText}"\n\nReturn JSON array of items: [{"title": string, "project"?: string, "dueDate"?: string, "priority": "low"|"normal"|"high"}]`;
     } else if (action === "build_daily_plan") {
       systemInstruction += " Given tasks and user schedule, order tasks logically.";
@@ -160,6 +160,17 @@ serve(async (req) => {
       });
     }
 
+    const parts: Array<Record<string, unknown>> = [{ text: prompt }];
+    if (action === "understand_image") {
+      if (!payload.imageBase64 || !payload.mimeType) {
+        return new Response(JSON.stringify({ error: "Image data is unavailable" }), {
+          status: 422,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      parts.push({ inlineData: { mimeType: payload.mimeType, data: payload.imageBase64 } });
+    }
+
     const vertexRes = await fetch(vertexEndpoint, {
       method: "POST",
       headers: {
@@ -167,7 +178,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
+        contents: [{ role: "user", parts }],
         systemInstruction: { parts: [{ text: systemInstruction }] },
         generationConfig: {
           responseMimeType: "application/json",

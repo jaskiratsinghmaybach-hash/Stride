@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -13,10 +14,9 @@ import * as Haptics from "expo-haptics";
 import {
   CheckCircle2,
   FileText,
-  Music,
   Pause,
   Play,
-  VolumeX,
+  Sparkles,
   X,
   Zap,
 } from "lucide-react-native";
@@ -35,7 +35,8 @@ import {
   recordFocusProgress,
   startFocusSession,
 } from "@/services/focus/focusClient";
-import { musicClient } from "@/services/music/musicClient";
+
+type ReflectionOption = "great" | "okay" | "interrupted";
 
 export default function FocusSessionScreen() {
   const { taskId, targetDurationMinutes } = useLocalSearchParams<{
@@ -56,7 +57,8 @@ export default function FocusSessionScreen() {
   const [focusSession, setFocusSession] = useState<FocusSession | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const [musicState, setMusicState] = useState("unavailable");
+  const [showReflection, setShowReflection] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -66,14 +68,10 @@ export default function FocusSessionScreen() {
     async function init() {
       if (!userId || !taskId) return;
       try {
-        const [taskData, mState] = await Promise.all([
-          getTask(userId, taskId),
-          musicClient.getState(),
-        ]);
+        const taskData = await getTask(userId, taskId);
         if (!mounted) return;
 
         setTask(taskData);
-        setMusicState(mState);
 
         if (taskData?.relatedContextIds?.length) {
           const items = await getContextItemsByIds(userId, taskData.relatedContextIds);
@@ -96,7 +94,7 @@ export default function FocusSessionScreen() {
 
   // Timer interval
   useEffect(() => {
-    if (isPaused) {
+    if (isPaused || showReflection) {
       if (timerRef.current) clearInterval(timerRef.current);
       return;
     }
@@ -115,22 +113,37 @@ export default function FocusSessionScreen() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isPaused, userId, focusSession?.id]);
+  }, [isPaused, showReflection, userId, focusSession?.id]);
 
   const togglePause = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     setIsPaused((prev) => !prev);
   };
 
-  const handleFinish = async () => {
-    if (!userId || !focusSession?.id) {
-      router.replace("/today");
-      return;
-    }
-
+  const handleFinish = () => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-    await completeFocusSession(userId, focusSession.id, elapsedSeconds, true);
-    router.replace("/(tabs)/progress");
+    setShowReflection(true);
+  };
+
+  const handleSelectReflection = async (option: ReflectionOption) => {
+    if (!userId || !focusSession?.id || isCompleting) return;
+
+    setIsCompleting(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    try {
+      await completeFocusSession(
+        userId,
+        focusSession.id,
+        elapsedSeconds,
+        true,
+        option
+      );
+      router.replace("/(tabs)/progress");
+    } catch (err) {
+      console.warn("Error finalizing focus session", err);
+      router.replace("/(tabs)/progress");
+    }
   };
 
   const handleExit = () => {
@@ -268,14 +281,6 @@ export default function FocusSessionScreen() {
               )}
             </View>
           </LiquidGlass>
-
-          {/* Music State (Truthful display per spec) */}
-          <View className="mt-6 flex-row items-center gap-2 rounded-full bg-white/5 px-4 py-2">
-            <VolumeX size={14} color={colors.muted} />
-            <Text className="text-xs" style={{ color: colors.muted }}>
-              Soundscape: {musicState === "unavailable" ? "Unavailable (No provider)" : musicState}
-            </Text>
-          </View>
         </View>
 
         {/* Bottom Actions: Pause & Done */}
@@ -314,6 +319,60 @@ export default function FocusSessionScreen() {
           </Pressable>
         </View>
       </View>
+
+      {/* Reflection Step Modal */}
+      {showReflection && (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            { backgroundColor: "rgba(5, 6, 20, 0.85)", justifyContent: "center", alignItems: "center", padding: 24 },
+          ]}
+        >
+          <LiquidGlass shape="card" tone="strong" style={{ width: "100%", maxWidth: 360 }}>
+            <View className="p-6 items-center">
+              <Sparkles size={28} color={colors.accent} />
+              <Text className="text-lg font-bold mt-3 mb-1" style={{ color: colors.ink }}>
+                How did that go?
+              </Text>
+              <Text className="text-xs text-center mb-6 leading-5" style={{ color: colors.muted }}>
+                A quick check-in to calibrate your focus rhythm.
+              </Text>
+
+              <View className="w-full gap-3">
+                <Pressable onPress={() => handleSelectReflection("great")}>
+                  <LiquidGlass shape="pill" tone="active">
+                    <View className="py-3 items-center">
+                      <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
+                        Great
+                      </Text>
+                    </View>
+                  </LiquidGlass>
+                </Pressable>
+
+                <Pressable onPress={() => handleSelectReflection("okay")}>
+                  <LiquidGlass shape="pill">
+                    <View className="py-3 items-center">
+                      <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
+                        Okay
+                      </Text>
+                    </View>
+                  </LiquidGlass>
+                </Pressable>
+
+                <Pressable onPress={() => handleSelectReflection("interrupted")}>
+                  <LiquidGlass shape="pill">
+                    <View className="py-3 items-center">
+                      <Text className="text-sm font-semibold" style={{ color: colors.muted }}>
+                        Interrupted
+                      </Text>
+                    </View>
+                  </LiquidGlass>
+                </Pressable>
+              </View>
+            </View>
+          </LiquidGlass>
+        </View>
+      )}
     </View>
   );
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -10,12 +11,14 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as Haptics from "expo-haptics";
 import {
-  BarChart3,
+  Award,
   CalendarCheck,
   CheckCircle2,
   Clock,
   Flame,
+  Lock,
   Sparkles,
   TrendingUp,
 } from "lucide-react-native";
@@ -27,6 +30,11 @@ import type { Task } from "@/types/task";
 import type { FocusSession } from "@/types/focus";
 import { getTasks } from "@/services/tasks/taskClient";
 import { getFocusSessions } from "@/services/focus/focusClient";
+import {
+  getRewardsSummary,
+  toLocalDateString,
+  type RewardsSummary,
+} from "@/services/rewards/rewardsEngine";
 
 export default function ProgressScreen() {
   const { colors } = useStrideTheme();
@@ -39,6 +47,7 @@ export default function ProgressScreen() {
   const [completedTasks, setCompletedTasks] = useState<Task[]>([]);
   const [activeTasksCount, setActiveTasksCount] = useState(0);
   const [focusSessions, setFocusSessions] = useState<FocusSession[]>([]);
+  const [rewards, setRewards] = useState<RewardsSummary | null>(null);
 
   const loadProgress = useCallback(async () => {
     if (!userId) {
@@ -46,9 +55,10 @@ export default function ProgressScreen() {
       return;
     }
     try {
-      const [allTasks, sessions] = await Promise.all([
+      const [allTasks, sessions, rewardSummary] = await Promise.all([
         getTasks(userId),
         getFocusSessions(userId),
+        getRewardsSummary(userId),
       ]);
 
       const done = allTasks
@@ -66,6 +76,7 @@ export default function ProgressScreen() {
       setCompletedTasks(done);
       setActiveTasksCount(active);
       setFocusSessions(sessions);
+      setRewards(rewardSummary);
     } catch (err) {
       console.warn("Failed loading progress", err);
     } finally {
@@ -94,24 +105,30 @@ export default function ProgressScreen() {
   );
   const totalFocusMinutes = Math.round(totalFocusSeconds / 60);
 
-  // Consistency / Calm Streak visual (7-day dots)
+  // Consistency / Calm Streak visual (7-day dots) backed by streak data
   const past7Days = Array.from({ length: 7 }).map((_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
-    const dayStart = new Date(d);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(d);
-    dayEnd.setHours(23, 59, 59, 999);
+    const dayStr = toLocalDateString(d.toISOString());
 
-    const hasCompletion = completedTasks.some((t) => {
+    const hasCreditedFocus = Boolean(rewards?.historyByDay[dayStr]);
+    const hasCompletedTask = completedTasks.some((t) => {
       if (!t.completedAt) return false;
-      const comp = new Date(t.completedAt);
-      return comp >= dayStart && comp <= dayEnd;
+      return toLocalDateString(t.completedAt) === dayStr;
     });
 
+    const active = hasCreditedFocus || hasCompletedTask;
     const dayName = d.toLocaleDateString("en-US", { weekday: "narrow" });
-    return { dayName, active: hasCompletion, isToday: i === 6 };
+    return { dayName, active, isToday: i === 6 };
   });
+
+  const handleDisabledRedeem = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Alert.alert(
+      "Stride Rewards",
+      "Point redemption for Stride Pro time is coming soon. Every 15+ minute focus session continues building your momentum!"
+    );
+  };
 
   return (
     <View className="flex-1">
@@ -156,6 +173,84 @@ export default function ProgressScreen() {
           </Text>
         </View>
 
+        {/* Rewards & Streak Card */}
+        <View className="mb-6">
+          <LiquidGlass shape="card" tone="strong">
+            <View className="p-5">
+              <View className="flex-row items-center justify-between mb-4">
+                {/* Streak Block */}
+                <View className="flex-row items-center gap-2.5">
+                  <View className="h-10 w-10 items-center justify-center rounded-xl bg-amber-500/20">
+                    <Flame size={22} color="#F59E0B" fill="#F59E0B" />
+                  </View>
+                  <View>
+                    <View className="flex-row items-baseline gap-1">
+                      <Text className="text-2xl font-bold" style={{ color: colors.ink }}>
+                        {rewards?.currentStreak ?? 0}
+                      </Text>
+                      <Text className="text-xs font-semibold" style={{ color: colors.muted }}>
+                        days
+                      </Text>
+                    </View>
+                    <Text className="text-[11px]" style={{ color: colors.muted }}>
+                      Focus Streak
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Points Block */}
+                <View className="items-end">
+                  <View className="flex-row items-baseline gap-1">
+                    <Text className="text-2xl font-bold" style={{ color: colors.accent }}>
+                      {rewards?.totalPoints ?? 0}
+                    </Text>
+                    <Text className="text-xs font-semibold" style={{ color: colors.muted }}>
+                      pts
+                    </Text>
+                  </View>
+                  <Text className="text-[11px]" style={{ color: colors.muted }}>
+                    Balance
+                  </Text>
+                </View>
+              </View>
+
+              {/* Daily Capped / Status Explainer */}
+              {rewards?.todaySessionPointsCapped ? (
+                <View className="rounded-xl bg-white/5 px-3.5 py-2.5 mb-4">
+                  <Text className="text-xs font-medium" style={{ color: colors.ink }}>
+                    Today&apos;s focus points are maxed (20/20) — still counts toward your streak!
+                  </Text>
+                </View>
+              ) : (rewards?.todaySessionPointsEarned ?? 0) > 0 ? (
+                <View className="rounded-xl bg-white/5 px-3.5 py-2.5 mb-4">
+                  <Text className="text-xs" style={{ color: colors.muted }}>
+                    +{rewards?.todaySessionPointsEarned} pts earned today (max 20 pts/day from sessions).
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* Disabled Redeem Affordance per spec */}
+              <View className="pt-3 border-t border-white/10 flex-row items-center justify-between">
+                <View className="flex-row items-center gap-1.5">
+                  <Award size={14} color={colors.muted} />
+                  <Text className="text-xs font-medium" style={{ color: colors.muted }}>
+                    Redeem for Pro
+                  </Text>
+                </View>
+
+                <Pressable onPress={handleDisabledRedeem}>
+                  <View className="flex-row items-center gap-1.5 rounded-full bg-white/10 px-3 py-1">
+                    <Lock size={11} color={colors.muted} />
+                    <Text className="text-[11px] font-semibold" style={{ color: colors.muted }}>
+                      Coming Soon
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+            </View>
+          </LiquidGlass>
+        </View>
+
         {/* Today's Tally */}
         <View className="mb-6 flex-row gap-3">
           <View className="flex-1">
@@ -198,7 +293,7 @@ export default function ProgressScreen() {
           </View>
         </View>
 
-        {/* Calm Consistency Rhythm (no loud analytics) */}
+        {/* Calm Consistency Rhythm */}
         <View className="mb-6">
           <Text
             className="mb-2.5 text-xs font-semibold tracking-wider uppercase"
@@ -244,27 +339,6 @@ export default function ProgressScreen() {
                   </View>
                 ))}
               </View>
-            </View>
-          </LiquidGlass>
-        </View>
-
-        {/* FUTURE EXTENSION POINT SEAM (per spec: clearly marked seam, no fake insights) */}
-        <View className="mb-6">
-          <LiquidGlass shape="card">
-            <View className="p-4">
-              <View className="flex-row items-center gap-2">
-                <Sparkles size={14} color={colors.accent} />
-                <Text
-                  className="text-xs font-bold uppercase tracking-wider"
-                  style={{ color: colors.accent }}
-                >
-                  Rhythm Intelligence (Future Pipeline)
-                </Text>
-              </View>
-              <Text className="mt-1.5 text-xs leading-5" style={{ color: colors.muted }}>
-                As STRIDE learns your completion patterns and energy curve, contextual
-                timing suggestions will connect here.
-              </Text>
             </View>
           </LiquidGlass>
         </View>

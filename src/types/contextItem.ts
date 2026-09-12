@@ -1,4 +1,4 @@
-export type ContextItemType = "document" | "image" | "note" | "file";
+export type ContextItemType = "document" | "image" | "note" | "file" | "audio";
 
 export type AiAnalysisState = "not_indexed" | "analyzing" | "analyzed" | "unavailable";
 
@@ -11,6 +11,7 @@ export type ContextItem = {
   relatedTaskIds?: string[];
   aiState: AiAnalysisState;
   aiSummary?: string; // only present when aiState === "analyzed"
+  extractedText?: string;
   uri?: string;
   mimeType?: string;
   notes?: string;

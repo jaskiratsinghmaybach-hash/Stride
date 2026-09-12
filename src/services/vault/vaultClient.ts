@@ -133,3 +133,48 @@ export async function getContextItemsByIds(
   const items = await getContextItems(userId);
   return items.filter((item) => set.has(item.id));
 }
+
+export async function relateContextToProject(
+  userId: string,
+  contextId: string,
+  projectId: string
+): Promise<ContextItem | null> {
+  return updateContextItem(userId, contextId, { projectId });
+}
+
+export async function relateContextToTask(
+  userId: string,
+  contextId: string,
+  taskId: string
+): Promise<{ context: ContextItem | null; task: import("@/types/task").Task | null }> {
+  const { getTask, updateTask } = await import("../tasks/taskClient");
+
+  const [contextItem, task] = await Promise.all([
+    getContextItem(userId, contextId),
+    getTask(userId, taskId),
+  ]);
+
+  let updatedContext = contextItem;
+  let updatedTask = task;
+
+  if (contextItem) {
+    const existingTasks = contextItem.relatedTaskIds || [];
+    if (!existingTasks.includes(taskId)) {
+      updatedContext = await updateContextItem(userId, contextId, {
+        relatedTaskIds: [...existingTasks, taskId],
+      });
+    }
+  }
+
+  if (task) {
+    const existingContexts = task.relatedContextIds || [];
+    if (!existingContexts.includes(contextId)) {
+      updatedTask = await updateTask(userId, taskId, {
+        relatedContextIds: [...existingContexts, contextId],
+      });
+    }
+  }
+
+  return { context: updatedContext, task: updatedTask };
+}
+

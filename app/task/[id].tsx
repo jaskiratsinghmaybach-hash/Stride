@@ -264,7 +264,7 @@ export default function TaskDetailScreen() {
           <Pressable
             onPress={() =>
               router.push({
-                pathname: "/focus/session",
+                pathname: "/(tabs)/focus",
                 params: { taskId: task.id },
               })
             }
@@ -273,7 +273,7 @@ export default function TaskDetailScreen() {
               <View className="flex-row items-center justify-center gap-2 py-3.5">
                 <Play size={16} color={colors.ink} fill={colors.ink} />
                 <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
-                  Launch Deep Focus Block
+                  Focus on this
                 </Text>
               </View>
             </LiquidGlass>

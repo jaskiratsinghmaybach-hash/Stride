@@ -7,4 +7,5 @@ export type FocusSession = {
   endedAt?: string; // ISO
   durationSeconds: number;
   status: FocusSessionStatus;
+  reflection?: "great" | "okay" | "interrupted";
 };

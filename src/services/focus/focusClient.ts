@@ -80,7 +80,8 @@ export async function completeFocusSession(
   userId: string,
   sessionId: string,
   totalDurationSeconds: number,
-  andCompleteTask: boolean = true
+  andCompleteTask: boolean = true,
+  reflection?: "great" | "okay" | "interrupted"
 ): Promise<FocusSession | null> {
   const sessions = await getFocusSessions(userId);
   const index = sessions.findIndex((s) => s.id === sessionId);
@@ -90,6 +91,9 @@ export async function completeFocusSession(
   session.endedAt = new Date().toISOString();
   session.durationSeconds = totalDurationSeconds;
   session.status = "completed";
+  if (reflection) {
+    session.reflection = reflection;
+  }
 
   await AsyncStorage.setItem(getFocusSessionsKey(userId), JSON.stringify(sessions));
 

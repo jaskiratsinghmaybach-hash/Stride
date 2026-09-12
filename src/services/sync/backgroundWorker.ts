@@ -26,8 +26,12 @@ export async function runBackgroundSync(): Promise<void> {
     const userId = data?.session?.user?.id;
     if (!userId) return; // Not authenticated — nothing to sync.
 
-    await syncContext(userId);
+    const { drainAiQueue } = await import("../ai/aiWorker");
+    await Promise.allSettled([
+      syncContext(userId),
+      drainAiQueue(userId),
+    ]);
   } catch (err) {
-    console.warn("[BackgroundWorker] Sync failed:", err);
+    console.warn("[BackgroundWorker] Sync/AI drain failed:", err);
   }
 }

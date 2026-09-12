@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Linking,
@@ -12,10 +12,14 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
+import * as Calendar from "expo-calendar";
+import { Audio } from "expo-av";
+import * as DocumentPicker from "expo-document-picker";
 import {
   ArrowLeft,
   Bell,
-  Calendar,
+  Calendar as CalendarIcon,
   Camera,
   CheckCircle2,
   FileText,
@@ -36,8 +40,7 @@ type PermissionItem = {
   name: string;
   icon: (color: string) => React.ReactNode;
   why: string;
-  granted: boolean;
-  canRequest: boolean;
+  status: "granted" | "denied" | "undetermined";
   onRequest: () => Promise<void>;
 };
 
@@ -46,101 +49,193 @@ export default function PermissionsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const [notificationGranted, setNotificationGranted] = useState(false);
+  const [notificationStatus, setNotificationStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
+  const [photoStatus, setPhotoStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
+  const [calendarStatus, setCalendarStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
+  const [micStatus, setMicStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
+  const [filesStatus, setFilesStatus] = useState<"granted" | "denied" | "undetermined">("granted");
 
-  useEffect(() => {
-    getNotificationPermissionStatus().then((status) => {
-      setNotificationGranted(status === "granted");
-    });
+  const checkAllStatuses = useCallback(async () => {
+    try {
+      // 1. Notifications
+      const notif = await getNotificationPermissionStatus();
+      setNotificationStatus(notif === "granted" ? "granted" : notif === "denied" ? "denied" : "undetermined");
+
+      // 2. Photos
+      const photoPerm = await ImagePicker.getMediaLibraryPermissionsAsync();
+      setPhotoStatus(
+        photoPerm.granted
+          ? "granted"
+          : photoPerm.status === ImagePicker.PermissionStatus.DENIED
+          ? "denied"
+          : "undetermined"
+      );
+
+      // 3. Calendar
+      const calPerm = await Calendar.getCalendarPermissionsAsync();
+      setCalendarStatus(
+        calPerm.granted
+          ? "granted"
+          : calPerm.status === "denied"
+          ? "denied"
+          : "undetermined"
+      );
+
+      // 4. Microphone
+      const micPerm = await Audio.getPermissionsAsync();
+      setMicStatus(
+        micPerm.granted
+          ? "granted"
+          : micPerm.status === Audio.PermissionStatus.DENIED
+          ? "denied"
+          : "undetermined"
+      );
+
+      // 5. Files: Scoped SAF / UIDocumentPicker is inherently granted on modern mobile OS
+      setFilesStatus("granted");
+    } catch (err) {
+      console.warn("Failed checking permissions", err);
+    }
   }, []);
 
-  const handleRequestNotification = async () => {
-    const granted = await requestNotificationPermission();
-    setNotificationGranted(granted);
-    if (!granted && Platform.OS !== "web") {
-      Alert.alert(
-        "Permission Required",
-        "Enable notifications in device settings to receive morning rhythm briefings.",
-        [
-          { text: "Cancel", style: "cancel" },
-          { text: "Open Settings", onPress: () => Linking.openSettings() },
-        ]
-      );
+  useEffect(() => {
+    checkAllStatuses();
+  }, [checkAllStatuses]);
+
+  const handleRequestFiles = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        type: "*/*",
+      });
+      if (!res.canceled) {
+        Alert.alert("File Access Verified", `Successfully accessed: ${res.assets[0]?.name}`);
+      }
+      setFilesStatus("granted");
+    } catch {
+      setFilesStatus("granted");
     }
   };
 
-  const handleGenericPermission = (name: string, why: string) => {
-    Alert.alert(
-      `${name} Permission`,
-      `${why}\n\nSTRIDE never accesses device resources without an explicit action initiated by you.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        { text: "Device Settings", onPress: () => Linking.openSettings() },
-      ]
-    );
+  const handleRequestPhotos = async () => {
+    try {
+      const res = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const granted = res.granted;
+      setPhotoStatus(granted ? "granted" : "denied");
+      if (!granted && Platform.OS !== "web") {
+        Alert.alert(
+          "Photos Permission",
+          "Enable photo library access in device settings to allow importing images into the Vault.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Device Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("Error requesting photos permission", err);
+    }
+  };
+
+  const handleRequestCalendar = async () => {
+    try {
+      const res = await Calendar.requestCalendarPermissionsAsync();
+      const granted = res.granted;
+      setCalendarStatus(granted ? "granted" : "denied");
+      if (!granted && Platform.OS !== "web") {
+        Alert.alert(
+          "Calendar Permission",
+          "Enable read-only calendar access in device settings to allow Stride to calibrate your focus window around scheduled commitments.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Device Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("Error requesting calendar permission", err);
+    }
+  };
+
+  const handleRequestNotifications = async () => {
+    try {
+      const granted = await requestNotificationPermission();
+      setNotificationStatus(granted ? "granted" : "denied");
+      if (!granted && Platform.OS !== "web") {
+        Alert.alert(
+          "Notification Permission",
+          "Enable notifications in device settings to receive morning rhythm briefings and focus timer completions.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Device Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("Error requesting notification permission", err);
+    }
+  };
+
+  const handleRequestMic = async () => {
+    try {
+      const res = await Audio.requestPermissionsAsync();
+      const granted = res.granted;
+      setMicStatus(granted ? "granted" : "denied");
+      if (!granted && Platform.OS !== "web") {
+        Alert.alert(
+          "Microphone Permission",
+          "Enable microphone access in device settings to capture thoughts and quick tasks via voice notes.",
+          [
+            { text: "Cancel", style: "cancel" },
+            { text: "Device Settings", onPress: () => Linking.openSettings() },
+          ]
+        );
+      }
+    } catch (err) {
+      console.warn("Error requesting mic permission", err);
+    }
   };
 
   const items: PermissionItem[] = [
     {
-      id: "notifications",
-      name: "Notifications",
-      icon: (c) => <Bell size={18} color={c} />,
-      why: "Sends morning briefing summaries and focus timer completion cues.",
-      granted: notificationGranted,
-      canRequest: true,
-      onRequest: handleRequestNotification,
-    },
-    {
       id: "files",
       name: "Files & Documents",
       icon: (c) => <FileText size={18} color={c} />,
-      why: "Allows indexing documents you explicitly import into the Vault.",
-      granted: false,
-      canRequest: true,
-      onRequest: async () =>
-        handleGenericPermission(
-          "Files & Documents",
-          "Used only when selecting files to add to your Knowledge Vault."
-        ),
-    },
-    {
-      id: "calendar",
-      name: "Calendar",
-      icon: (c) => <Calendar size={18} color={c} />,
-      why: "Correlates upcoming commitments against your available focus blocks.",
-      granted: false,
-      canRequest: true,
-      onRequest: async () =>
-        handleGenericPermission(
-          "Calendar",
-          "STRIDE reads scheduled event windows locally to calculate focus availability."
-        ),
+      why: "Lets Stride read documents you choose to add, so it can find deadlines and summarize them for you.",
+      status: filesStatus,
+      onRequest: handleRequestFiles,
     },
     {
       id: "photos",
       name: "Photos & Media",
       icon: (c) => <Camera size={18} color={c} />,
-      why: "Enables extracting action items from whiteboards or document photos.",
-      granted: false,
-      canRequest: true,
-      onRequest: async () =>
-        handleGenericPermission(
-          "Photos",
-          "Used strictly on demand when capturing photo notes."
-        ),
+      why: "Lets Stride understand screenshots or photos you add — like a whiteboard photo or a receipt.",
+      status: photoStatus,
+      onRequest: handleRequestPhotos,
+    },
+    {
+      id: "calendar",
+      name: "Calendar (Read-Only)",
+      icon: (c) => <CalendarIcon size={18} color={c} />,
+      why: "Lets Stride see your upcoming events so Next Move can account for your actual schedule.",
+      status: calendarStatus,
+      onRequest: handleRequestCalendar,
+    },
+    {
+      id: "notifications",
+      name: "Notifications",
+      icon: (c) => <Bell size={18} color={c} />,
+      why: "Sends morning briefing summaries and focus timer completion cues.",
+      status: notificationStatus,
+      onRequest: handleRequestNotifications,
     },
     {
       id: "microphone",
       name: "Microphone",
       icon: (c) => <Mic size={18} color={c} />,
-      why: "Powers quick voice capture of thought streams and task dumps.",
-      granted: false,
-      canRequest: true,
-      onRequest: async () =>
-        handleGenericPermission(
-          "Microphone",
-          "Audio is processed only during active recording and never recorded continuously."
-        ),
+      why: "Lets you capture thoughts by voice instead of typing.",
+      status: micStatus,
+      onRequest: handleRequestMic,
     },
   ];
 
@@ -204,63 +299,75 @@ export default function PermissionsScreen() {
 
         {/* Permissions List */}
         <View className="gap-3">
-          {items.map((item) => (
-            <LiquidGlass key={item.id} shape="card">
-              <View className="p-4">
-                <View className="flex-row items-center justify-between mb-1.5">
-                  <View className="flex-row items-center gap-2.5">
-                    <View className="h-8 w-8 items-center justify-center rounded-lg bg-white/5">
-                      {item.icon(colors.accent)}
-                    </View>
-                    <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
-                      {item.name}
-                    </Text>
-                  </View>
-
-                  <View
-                    className="flex-row items-center gap-1 rounded-full px-2.5 py-0.5"
-                    style={{
-                      backgroundColor: item.granted
-                        ? "rgba(52, 211, 153, 0.16)"
-                        : "rgba(255, 255, 255, 0.08)",
-                    }}
-                  >
-                    {item.granted ? (
-                      <>
-                        <CheckCircle2 size={11} color="#34D399" />
-                        <Text className="text-[10px] font-semibold text-emerald-400">
-                          Granted
-                        </Text>
-                      </>
-                    ) : (
-                      <>
-                        <XCircle size={11} color={colors.muted} />
-                        <Text className="text-[10px] font-semibold" style={{ color: colors.muted }}>
-                          Not Granted
-                        </Text>
-                      </>
-                    )}
-                  </View>
-                </View>
-
-                <Text className="text-xs leading-5" style={{ color: colors.muted }}>
-                  {item.why}
-                </Text>
-
-                <View className="mt-3 flex-row justify-end">
-                  <Pressable onPress={item.onRequest}>
-                    <LiquidGlass shape="pill">
-                      <View className="px-3 py-1.5">
-                        <Text className="text-xs font-medium" style={{ color: colors.ink }}>
-                          {item.granted ? "Manage" : "Request Access"}
-                        </Text>
+          {items.map((item) => {
+            const isGranted = item.status === "granted";
+            return (
+              <LiquidGlass key={item.id} shape="card">
+                <View className="p-4">
+                  <View className="flex-row items-center justify-between mb-1.5">
+                    <View className="flex-row items-center gap-2.5">
+                      <View className="h-8 w-8 items-center justify-center rounded-lg bg-white/5">
+                        {item.icon(colors.accent)}
                       </View>
-                    </LiquidGlass>
-                  </Pressable>
+                      <Text className="text-sm font-semibold" style={{ color: colors.ink }}>
+                        {item.name}
+                      </Text>
+                    </View>
+
+                    <View
+                      className="flex-row items-center gap-1 rounded-full px-2.5 py-0.5"
+                      style={{
+                        backgroundColor: isGranted
+                          ? "rgba(52, 211, 153, 0.16)"
+                          : item.status === "denied"
+                          ? "rgba(239, 68, 68, 0.16)"
+                          : "rgba(255, 255, 255, 0.08)",
+                      }}
+                    >
+                      {isGranted ? (
+                        <>
+                          <CheckCircle2 size={11} color="#34D399" />
+                          <Text className="text-[10px] font-semibold text-emerald-400">
+                            Granted
+                          </Text>
+                        </>
+                      ) : item.status === "denied" ? (
+                        <>
+                          <XCircle size={11} color="#EF4444" />
+                          <Text className="text-[10px] font-semibold text-rose-400">
+                            Denied
+                          </Text>
+                        </>
+                      ) : (
+                        <>
+                          <XCircle size={11} color={colors.muted} />
+                          <Text className="text-[10px] font-semibold" style={{ color: colors.muted }}>
+                            Not Granted
+                          </Text>
+                        </>
+                      )}
+                    </View>
+                  </View>
+
+                  <Text className="text-xs leading-5" style={{ color: colors.muted }}>
+                    {item.why}
+                  </Text>
+
+                  <View className="mt-3 flex-row justify-end">
+                    <Pressable onPress={item.onRequest}>
+                      <LiquidGlass shape="pill">
+                        <View className="px-3 py-1.5">
+                          <Text className="text-xs font-medium" style={{ color: colors.ink }}>
+                            {isGranted ? "Test / Manage" : "Request Access"}
+                          </Text>
+                        </View>
+                      </LiquidGlass>
+                    </Pressable>
+                  </View>
                 </View>
-              </View>
-            </LiquidGlass>
-          ))}
+              </LiquidGlass>
+            );
+          })}
         </View>
       </ScrollView>
     </View>

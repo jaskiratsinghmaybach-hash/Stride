@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -11,17 +12,23 @@ import {
 import { useRouter } from "expo-router";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as DocumentPicker from "expo-document-picker";
+import * as ImagePicker from "expo-image-picker";
+import * as Haptics from "expo-haptics";
 import {
   Archive,
   ArrowRight,
+  Camera,
   FileCode,
   FileImage,
   FileText,
   Folder,
   FolderPlus,
   Layers,
+  Mic,
   Plus,
   Sparkles,
+  X,
 } from "lucide-react-native";
 
 import { useAuth } from "@/auth/AuthProvider";
@@ -30,17 +37,18 @@ import { useStrideTheme } from "@/theme/StrideThemeProvider";
 import type { ContextItem, ContextItemType } from "@/types/contextItem";
 import type { Project } from "@/types/project";
 import {
-  createContextItem,
   createProject,
   getContextItems,
   getProjects,
 } from "@/services/vault/vaultClient";
+import { addAndIndexContextItem } from "@/services/vault/indexing";
 
 const FILTER_TABS: Array<{ id: ContextItemType | "all"; label: string }> = [
   { id: "all", label: "All" },
   { id: "document", label: "Docs" },
   { id: "note", label: "Notes" },
   { id: "image", label: "Images" },
+  { id: "audio", label: "Voice" },
   { id: "file", label: "Files" },
 ];
 
@@ -60,6 +68,12 @@ export default function VaultScreen() {
   // Quick inline project create state
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
+
+  // Context add menu state
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteContent, setNoteContent] = useState("");
 
   const loadVaultData = useCallback(async () => {
     if (!userId) {
@@ -92,6 +106,85 @@ export default function VaultScreen() {
     await loadVaultData();
   };
 
+  const handlePickDocument = async () => {
+    if (!userId) return;
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        type: "*/*",
+      });
+
+      if (!res.canceled && res.assets?.[0]) {
+        const asset = res.assets[0];
+        setShowAddMenu(false);
+        await addAndIndexContextItem(userId, {
+          title: asset.name,
+          type: "document",
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          projectId: selectedProjectId || undefined,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        await loadVaultData();
+      }
+    } catch (err) {
+      console.warn("Failed picking document in vault", err);
+    }
+  };
+
+  const handlePickPhoto = async () => {
+    if (!userId) return;
+    try {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert("Photos Permission", "Enable photo access to add images to your Vault.");
+        return;
+      }
+
+      const res = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!res.canceled && res.assets?.[0]) {
+        const asset = res.assets[0];
+        setShowAddMenu(false);
+        await addAndIndexContextItem(userId, {
+          title: asset.fileName || `Photo (${new Date().toLocaleDateString()})`,
+          type: "image",
+          uri: asset.uri,
+          mimeType: asset.mimeType,
+          projectId: selectedProjectId || undefined,
+        });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        await loadVaultData();
+      }
+    } catch (err) {
+      console.warn("Failed picking photo in vault", err);
+    }
+  };
+
+  const handleSaveNote = async () => {
+    if (!userId || !noteTitle.trim()) return;
+    try {
+      await addAndIndexContextItem(userId, {
+        title: noteTitle.trim(),
+        type: "note",
+        notes: noteContent.trim(),
+        projectId: selectedProjectId || undefined,
+      });
+      setNoteTitle("");
+      setNoteContent("");
+      setIsAddingNote(false);
+      setShowAddMenu(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      await loadVaultData();
+    } catch (err) {
+      console.warn("Failed creating note", err);
+    }
+  };
+
   const filteredItems = items.filter((item) => {
     const matchesType = activeFilter === "all" || item.type === activeFilter;
     const matchesProject = !selectedProjectId || item.projectId === selectedProjectId;
@@ -106,6 +199,8 @@ export default function VaultScreen() {
         return <FileImage size={18} color={colors.accent} />;
       case "note":
         return <FileCode size={18} color={colors.accent} />;
+      case "audio":
+        return <Mic size={18} color={colors.accent} />;
       default:
         return <Archive size={18} color={colors.accent} />;
     }
@@ -155,22 +250,146 @@ export default function VaultScreen() {
             </Text>
           </View>
 
-          <Pressable
-            onPress={() => setIsAddingProject(!isAddingProject)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel="New project"
-          >
-            <LiquidGlass shape="pill" intensity={28}>
-              <View className="flex-row items-center gap-1.5 px-3 py-2">
-                <FolderPlus size={16} color={colors.ink} />
-                <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
-                  Project
-                </Text>
+          <View className="flex-row items-center gap-2">
+            <Pressable
+              onPress={() => setShowAddMenu(!showAddMenu)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Add context"
+            >
+              <LiquidGlass shape="pill" tone="hero" intensity={28}>
+                <View className="flex-row items-center gap-1.5 px-3 py-2">
+                  <Plus size={16} color={colors.ink} />
+                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                    Add
+                  </Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+
+            <Pressable
+              onPress={() => setIsAddingProject(!isAddingProject)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="New project"
+            >
+              <LiquidGlass shape="pill" intensity={28}>
+                <View className="flex-row items-center gap-1.5 px-3 py-2">
+                  <FolderPlus size={16} color={colors.ink} />
+                  <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                    Project
+                  </Text>
+                </View>
+              </LiquidGlass>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Add Context Action Dropdown */}
+        {showAddMenu && (
+          <View className="mb-6">
+            <LiquidGlass shape="card" tone="strong">
+              <View className="p-4">
+                <View className="flex-row items-center justify-between mb-3">
+                  <Text className="text-xs font-bold uppercase tracking-wider" style={{ color: colors.accent }}>
+                    Add Context {selectedProjectId ? `to ${projects.find((p) => p.id === selectedProjectId)?.name}` : ""}
+                  </Text>
+                  <Pressable onPress={() => setShowAddMenu(false)} hitSlop={8}>
+                    <X size={16} color={colors.muted} />
+                  </Pressable>
+                </View>
+
+                {!isAddingNote ? (
+                  <View className="flex-row gap-2.5">
+                    <Pressable onPress={handlePickDocument} className="flex-1">
+                      <LiquidGlass shape="card">
+                        <View className="items-center justify-center p-3 gap-1">
+                          <FileText size={18} color={colors.accent} />
+                          <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                            Document
+                          </Text>
+                        </View>
+                      </LiquidGlass>
+                    </Pressable>
+
+                    <Pressable onPress={handlePickPhoto} className="flex-1">
+                      <LiquidGlass shape="card">
+                        <View className="items-center justify-center p-3 gap-1">
+                          <Camera size={18} color={colors.accent} />
+                          <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                            Photo
+                          </Text>
+                        </View>
+                      </LiquidGlass>
+                    </Pressable>
+
+                    <Pressable onPress={() => setIsAddingNote(true)} className="flex-1">
+                      <LiquidGlass shape="card">
+                        <View className="items-center justify-center p-3 gap-1">
+                          <FileCode size={18} color={colors.accent} />
+                          <Text className="text-xs font-semibold" style={{ color: colors.ink }}>
+                            Quick Note
+                          </Text>
+                        </View>
+                      </LiquidGlass>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View className="gap-2.5">
+                    <TextInput
+                      value={noteTitle}
+                      onChangeText={setNoteTitle}
+                      placeholder="Note Title..."
+                      placeholderTextColor={colors.muted}
+                      style={{
+                        color: colors.ink,
+                        backgroundColor: "rgba(255,255,255,0.06)",
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        fontSize: 13,
+                      }}
+                      autoFocus
+                    />
+                    <TextInput
+                      value={noteContent}
+                      onChangeText={setNoteContent}
+                      placeholder="Content, takeaways, or references..."
+                      placeholderTextColor={colors.muted}
+                      multiline
+                      style={{
+                        color: colors.ink,
+                        backgroundColor: "rgba(255,255,255,0.06)",
+                        borderRadius: 10,
+                        paddingHorizontal: 12,
+                        paddingVertical: 8,
+                        fontSize: 13,
+                        minHeight: 60,
+                        textAlignVertical: "top",
+                      }}
+                    />
+                    <View className="flex-row justify-end gap-2 mt-1">
+                      <Pressable onPress={() => setIsAddingNote(false)} className="px-3 py-1.5">
+                        <Text className="text-xs" style={{ color: colors.muted }}>
+                          Cancel
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleSaveNote}
+                        className="px-4 py-1.5 rounded-full"
+                        style={{ backgroundColor: colors.accent }}
+                      >
+                        <Text className="text-xs font-semibold text-slate-900">
+                          Save Note
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                )}
               </View>
             </LiquidGlass>
-          </Pressable>
-        </View>
+          </View>
+        )}
 
         {/* Inline New Project Form */}
         {isAddingProject && (
@@ -219,7 +438,7 @@ export default function VaultScreen() {
           </View>
         )}
 
-        {/* PROJECTS SECTION (per spec: grouped by Project first) */}
+        {/* PROJECTS SECTION */}
         <View className="mb-6">
           <Text
             className="mb-2.5 text-xs font-semibold tracking-wider uppercase"
@@ -285,7 +504,7 @@ export default function VaultScreen() {
           </ScrollView>
         </View>
 
-        {/* SECONDARY FILTER TABS (Recent / Docs / Notes / Images) */}
+        {/* SECONDARY FILTER TABS */}
         <View className="mb-4">
           <ScrollView
             horizontal

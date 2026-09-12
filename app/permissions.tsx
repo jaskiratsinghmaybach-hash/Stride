@@ -14,7 +14,11 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as ImagePicker from "expo-image-picker";
 import * as Calendar from "expo-calendar";
-import { Audio } from "expo-av";
+import {
+  getRecordingPermissionsAsync,
+  requestRecordingPermissionsAsync,
+} from "expo-audio";
+import { PermissionStatus } from "expo";
 import * as DocumentPicker from "expo-document-picker";
 import {
   ArrowLeft,
@@ -82,11 +86,11 @@ export default function PermissionsScreen() {
       );
 
       // 4. Microphone
-      const micPerm = await Audio.getPermissionsAsync();
+      const micPerm = await getRecordingPermissionsAsync();
       setMicStatus(
         micPerm.granted
           ? "granted"
-          : micPerm.status === Audio.PermissionStatus.DENIED
+          : micPerm.status === PermissionStatus.DENIED
           ? "denied"
           : "undetermined"
       );
@@ -178,7 +182,7 @@ export default function PermissionsScreen() {
 
   const handleRequestMic = async () => {
     try {
-      const res = await Audio.requestPermissionsAsync();
+      const res = await requestRecordingPermissionsAsync();
       const granted = res.granted;
       setMicStatus(granted ? "granted" : "denied");
       if (!granted && Platform.OS !== "web") {

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   KeyboardAvoidingView,
@@ -15,7 +15,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import * as DocumentPicker from "expo-document-picker";
-import { Audio } from "expo-av";
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from "expo-audio";
 import {
   ArrowRight,
   Camera,
@@ -40,10 +45,11 @@ export default function QuickCaptureModal() {
   const router = useRouter();
   const userId = session?.user?.id;
 
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
   const [input, setInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
-  const recordingRef = useRef<Audio.Recording | null>(null);
 
   const handleSubmit = async () => {
     const text = input.trim();
@@ -81,14 +87,10 @@ export default function QuickCaptureModal() {
     if (isRecording) {
       // Stop recording
       try {
-        const recording = recordingRef.current;
-        if (!recording) return;
-
         setIsRecording(false);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
-        recordingRef.current = null;
+        await recorder.stop();
+        const uri = recorder.uri;
 
         if (uri) {
           const timestamp = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -106,7 +108,7 @@ export default function QuickCaptureModal() {
     } else {
       // Start recording
       try {
-        const perm = await Audio.requestPermissionsAsync();
+        const perm = await requestRecordingPermissionsAsync();
         if (!perm.granted) {
           Alert.alert(
             "Microphone Permission",
@@ -115,15 +117,13 @@ export default function QuickCaptureModal() {
           return;
         }
 
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: true,
-          playsInSilentModeIOS: true,
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
         });
 
-        const { recording } = await Audio.Recording.createAsync(
-          Audio.RecordingOptionsPresets.HIGH_QUALITY
-        );
-        recordingRef.current = recording;
+        await recorder.prepareToRecordAsync();
+        recorder.record();
         setIsRecording(true);
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
       } catch (err) {

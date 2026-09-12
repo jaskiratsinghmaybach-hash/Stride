@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   Keyboard,
@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -14,17 +15,21 @@ import {
 import Animated, {
   Easing,
   FadeIn,
-  FadeInDown,
   useAnimatedStyle,
   useSharedValue,
   withTiming,
 } from "react-native-reanimated";
+import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/auth/AuthProvider";
 import { useStrideTheme } from "@/theme/StrideThemeProvider";
+import { AnimatedGradientBackground } from "@/components/ui/AnimatedGradientBackground";
+import { LiquidGlass } from "@/components/ui/LiquidGlass";
+
+type ThemeColors = ReturnType<typeof useStrideTheme>["colors"];
 
 const priorities = ["Work", "Study", "Health", "Personal", "Projects"];
-const slides = [
+const slides: [string, string, string][] = [
   ["MEET STRIDE", "Understand your day.", "STRIDE quietly turns the context you choose to connect into something useful."],
   ["LESS ORGANIZING", "Focus on what matters.", "Instead of making another giant task list, STRIDE helps surface the few things worth your attention."],
   ["BUILT AROUND YOU", "Your day, your way.", "Start with a little context about you. STRIDE will use it to make the experience personal."],
@@ -38,6 +43,7 @@ export default function OnboardingScreen() {
   const { signInWithGoogle, saveOnboarding } = useAuth();
   const { colors } = useStrideTheme();
   const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [dayStart, setDayStart] = useState("08:00");
@@ -59,6 +65,7 @@ export default function OnboardingScreen() {
 
   function goToStep(nextStep: number) {
     Keyboard.dismiss();
+    setDirection(nextStep > step ? 1 : -1);
     setStep(nextStep);
     scrollRef.current?.scrollTo({ y: 0, animated: false });
   }
@@ -108,14 +115,22 @@ export default function OnboardingScreen() {
     setTimePicker(null);
   }
 
+  function togglePriority(item: string) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelected((current) => (current.includes(item) ? current.filter((v) => v !== item) : [...current, item]));
+  }
+
   return (
     <KeyboardAvoidingView
       className="flex-1"
       behavior="padding"
       keyboardVerticalOffset={Platform.OS === "ios" ? 8 : 0}
-      style={{ backgroundColor: colors.background }}
     >
-      <View className="flex-1 px-6 pt-14" style={{ backgroundColor: colors.background }}>
+      <View style={StyleSheet.absoluteFill}>
+        <AnimatedGradientBackground step={step} />
+      </View>
+
+      <View className="flex-1 px-6 pt-14">
         <View className="mb-5 flex-row items-center justify-between">
           <Pressable
             onPress={() => step > 0 && goToStep(step - 1)}
@@ -123,22 +138,14 @@ export default function OnboardingScreen() {
             hitSlop={14}
             className="h-10 w-10 items-start justify-center"
           >
-            <Text className="text-3xl" style={{ color: step === 0 ? colors.background : colors.ink }}>
+            <Text className="text-3xl" style={{ color: step === 0 ? "transparent" : colors.ink }}>
               ‹
             </Text>
           </Pressable>
 
           <View className="flex-row items-center gap-2">
             {Array.from({ length: total }).map((_, i) => (
-              <Animated.View
-                key={i}
-                className="h-1.5 rounded-full"
-                entering={FadeIn.duration(140)}
-                style={{
-                  width: i === step ? 28 : 8,
-                  backgroundColor: i <= step ? colors.accent : colors.shadowLight,
-                }}
-              />
+              <ProgressDot key={i} active={i <= step} current={i === step} />
             ))}
           </View>
 
@@ -160,10 +167,7 @@ export default function OnboardingScreen() {
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
         >
-          <Animated.View
-            key={step}
-            entering={FadeInDown.duration(190).easing(Easing.out(Easing.cubic))}
-          >
+          <StepTransition trigger={step} direction={direction}>
             {step < 3 && (
               <View>
                 <Text className="text-sm font-semibold tracking-widest" style={{ color: colors.accent }}>
@@ -186,20 +190,22 @@ export default function OnboardingScreen() {
                 <Text className="mt-4 text-4xl font-semibold" style={{ color: colors.ink }}>
                   What should I call you?
                 </Text>
-                <View className="mt-8 rounded-[26px] px-5 py-4" style={cardStyle(colors)}>
-                  <TextInput
-                    value={name}
-                    onChangeText={setName}
-                    placeholder="Your name"
-                    placeholderTextColor={colors.muted}
-                    returnKeyType="done"
-                    blurOnSubmit
-                    onSubmitEditing={Keyboard.dismiss}
-                    className="text-xl"
-                    style={{ color: colors.ink }}
-                    autoFocus
-                  />
-                </View>
+                <LiquidGlass shape="card" style={{ marginTop: 32 }}>
+                  <View className="px-5 py-4">
+                    <TextInput
+                      value={name}
+                      onChangeText={setName}
+                      placeholder="Your name"
+                      placeholderTextColor={colors.muted}
+                      returnKeyType="done"
+                      blurOnSubmit
+                      onSubmitEditing={Keyboard.dismiss}
+                      className="text-xl"
+                      style={{ color: colors.ink }}
+                      autoFocus
+                    />
+                  </View>
+                </LiquidGlass>
                 <Text className="mt-3 px-1 text-sm" style={{ color: colors.muted }}>
                   You can change this anytime.
                 </Text>
@@ -221,28 +227,8 @@ export default function OnboardingScreen() {
                   {priorities.map((item, index) => {
                     const active = selected.includes(item);
                     return (
-                      <Animated.View
-                        key={item}
-                        entering={FadeIn.duration(150).delay(index * 35)}
-                      >
-                        <Pressable
-                          onPress={() =>
-                            setSelected((current) =>
-                              active ? current.filter((v) => v !== item) : [...current, item],
-                            )
-                          }
-                          className="rounded-[20px] px-5 py-4"
-                          style={{
-                            ...cardStyle(colors),
-                            backgroundColor: active ? colors.accentSoft : colors.surface,
-                            borderWidth: active ? 1 : 0,
-                            borderColor: colors.accent,
-                          }}
-                        >
-                          <Text className="font-semibold" style={{ color: active ? colors.accent : colors.ink }}>
-                            {item}
-                          </Text>
-                        </Pressable>
+                      <Animated.View key={item} entering={FadeIn.duration(150).delay(index * 35)}>
+                        <PriorityPill label={item} active={active} onPress={() => togglePriority(item)} />
                       </Animated.View>
                     );
                   })}
@@ -267,16 +253,18 @@ export default function OnboardingScreen() {
                   <TimeField label="Wind down" value={dayEnd} onPress={() => openTimePicker("end")} />
                 </View>
 
-                <View className="mt-6 rounded-[22px] px-5 py-4" style={{ backgroundColor: colors.surface }}>
-                  <Text className="text-sm leading-5" style={{ color: colors.muted }}>
-                    Next, we&apos;ll save your STRIDE securely with Google. You can connect more of your device when you&apos;re ready.
-                  </Text>
-                </View>
+                <LiquidGlass shape="card" style={{ marginTop: 24 }}>
+                  <View className="px-5 py-4">
+                    <Text className="text-sm leading-5" style={{ color: colors.muted }}>
+                      Next, we&apos;ll save your STRIDE securely with Google. You can connect more of your device when you&apos;re ready.
+                    </Text>
+                  </View>
+                </LiquidGlass>
               </View>
             )}
 
             {!!error && (
-              <Text className="mt-5 text-center text-sm" style={{ color: "#B42318" }}>
+              <Text className="mt-5 text-center text-sm" style={{ color: "#FFB4A8" }}>
                 {error}
               </Text>
             )}
@@ -290,7 +278,7 @@ export default function OnboardingScreen() {
                 colors={colors}
               />
             </View>
-          </Animated.View>
+          </StepTransition>
         </ScrollView>
       </View>
 
@@ -308,38 +296,78 @@ export default function OnboardingScreen() {
   );
 }
 
-function cardStyle(colors: ReturnType<typeof useStrideTheme>["colors"]) {
-  return {
-    backgroundColor: colors.surface,
-    shadowColor: colors.shadow,
-    shadowOffset: { width: 5, height: 5 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 4,
-  };
+/** Directional slide+fade wrapper: moves forward steps in from the right, back steps from the left. */
+function StepTransition({
+  trigger,
+  direction,
+  children,
+}: {
+  trigger: number;
+  direction: 1 | -1;
+  children: ReactNode;
+}) {
+  return (
+    <Animated.View
+      key={trigger}
+      entering={FadeIn.duration(220)
+        .easing(Easing.out(Easing.cubic))
+        .withInitialValues({ opacity: 0, transform: [{ translateX: direction * 24 }, { scale: 0.985 }] } as any)}
+    >
+      {children}
+    </Animated.View>
+  );
 }
 
-function TimeField({
-  label,
-  value,
-  onPress,
-}: {
-  label: string;
-  value: string;
-  onPress: () => void;
-}) {
-  const { colors } = useStrideTheme();
+function ProgressDot({ active, current }: { active: boolean; current: boolean }) {
+  const width = useSharedValue(current ? 28 : 8);
+  width.value = withTiming(current ? 28 : 8, { duration: 260, easing: Easing.out(Easing.cubic) });
+  const style = useAnimatedStyle(() => ({ width: width.value }));
   return (
-    <Pressable onPress={onPress} className="flex-row items-center justify-between rounded-[24px] px-5 py-4" style={cardStyle(colors)}>
-      <Text className="font-medium" style={{ color: colors.ink }}>
-        {label}
-      </Text>
-      <View className="flex-row items-center gap-2">
-        <Text className="text-lg font-semibold" style={{ color: colors.accent }}>
-          {value}
-        </Text>
-        <Text className="text-base" style={{ color: colors.muted }}>›</Text>
-      </View>
+    <Animated.View
+      className="h-1.5 rounded-full"
+      style={[style, { backgroundColor: active ? "#FFFFFF" : "rgba(255,255,255,0.28)" }]}
+    />
+  );
+}
+
+function PriorityPill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const scale = useSharedValue(1);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  return (
+    <Animated.View style={animatedStyle}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={() => { scale.value = withTiming(0.95, { duration: 80 }); }}
+        onPressOut={() => { scale.value = withTiming(1, { duration: 120 }); }}
+      >
+        <LiquidGlass shape="pill" tone={active ? "active" : "default"}>
+          <View className="px-5 py-3.5">
+            <Text className="font-semibold" style={{ color: active ? "#FFFFFF" : "rgba(255,255,255,0.9)" }}>
+              {label}
+            </Text>
+          </View>
+        </LiquidGlass>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+function TimeField({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress}>
+      <LiquidGlass shape="card">
+        <View className="flex-row items-center justify-between px-5 py-4">
+          <Text className="font-medium" style={{ color: "#FFFFFF" }}>
+            {label}
+          </Text>
+          <View className="flex-row items-center gap-2">
+            <Text className="text-lg font-semibold" style={{ color: "#FFFFFF" }}>
+              {value}
+            </Text>
+            <Text className="text-base" style={{ color: "rgba(255,255,255,0.6)" }}>›</Text>
+          </View>
+        </View>
+      </LiquidGlass>
     </Pressable>
   );
 }
@@ -355,7 +383,7 @@ function ActionButton({
   disabled: boolean;
   busy: boolean;
   onPress: () => void;
-  colors: ReturnType<typeof useStrideTheme>["colors"];
+  colors: ThemeColors;
 }) {
   const scale = useSharedValue(1);
   const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
@@ -364,25 +392,32 @@ function ActionButton({
     <Animated.View style={animatedStyle}>
       <Pressable
         disabled={disabled}
-        onPress={onPress}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          onPress();
+        }}
         onPressIn={() => { scale.value = withTiming(0.97, { duration: 80 }); }}
         onPressOut={() => { scale.value = withTiming(1, { duration: 100 }); }}
         className="flex-row items-center rounded-[20px] px-5 py-3.5"
         style={{
-          backgroundColor: disabled ? colors.disabled : colors.accent,
-          shadowColor: colors.shadow,
-          shadowOffset: { width: 4, height: 4 },
-          shadowOpacity: disabled ? 0 : 0.14,
-          shadowRadius: 8,
-          elevation: disabled ? 0 : 4,
+          backgroundColor: disabled ? colors.disabled : "#FFFFFF",
+          shadowColor: "#000",
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: disabled ? 0 : 0.22,
+          shadowRadius: 14,
+          elevation: disabled ? 0 : 5,
         }}
       >
         {busy ? (
-          <ActivityIndicator color="#FFFFFF" />
+          <ActivityIndicator color={colors.accent} />
         ) : (
           <>
-            <Text className="text-base font-semibold text-white">{label}</Text>
-            <Text className="ml-2 text-lg font-semibold text-white">→</Text>
+            <Text className="text-base font-semibold" style={{ color: disabled ? colors.muted : "#22204A" }}>
+              {label}
+            </Text>
+            <Text className="ml-2 text-lg font-semibold" style={{ color: disabled ? colors.muted : "#22204A" }}>
+              →
+            </Text>
           </>
         )}
       </Pressable>
@@ -407,73 +442,84 @@ function TimePickerModal({
   onMinuteChange: (minute: number) => void;
   onClose: () => void;
   onConfirm: () => void;
-  colors: ReturnType<typeof useStrideTheme>["colors"];
+  colors: ThemeColors;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View className="flex-1 justify-end" style={{ backgroundColor: "rgba(20, 28, 45, 0.28)" }}>
+      <View className="flex-1 justify-end" style={{ backgroundColor: "rgba(6, 8, 20, 0.55)" }}>
         <Animated.View
-          entering={FadeInDown.duration(180).easing(Easing.out(Easing.cubic))}
-          className="rounded-t-[30px] px-6 pb-8 pt-5"
-          style={{ backgroundColor: colors.background }}
+          entering={FadeIn.duration(200).easing(Easing.out(Easing.cubic))}
+          className="overflow-hidden rounded-t-[30px]"
         >
-          <View className="mb-5 flex-row items-center justify-between">
-            <View>
-              <Text className="text-xs font-semibold tracking-widest" style={{ color: colors.accent }}>
-                CHOOSE TIME
-              </Text>
-              <Text className="mt-1 text-3xl font-semibold" style={{ color: colors.ink }}>
-                {String(hour).padStart(2, "0")}:{String(minute).padStart(2, "0")}
-              </Text>
+          <LiquidGlass shape="card" tone="strong" style={{ borderRadius: 0 }} intensity={44}>
+            <View className="px-6 pb-8 pt-5">
+              <View className="mb-5 flex-row items-center justify-between">
+                <View>
+                  <Text className="text-xs font-semibold tracking-widest" style={{ color: colors.accent }}>
+                    CHOOSE TIME
+                  </Text>
+                  <Text className="mt-1 text-3xl font-semibold" style={{ color: colors.ink }}>
+                    {String(hour).padStart(2, "0")}:{String(minute).padStart(2, "0")}
+                  </Text>
+                </View>
+                <Pressable onPress={onClose} hitSlop={10}>
+                  <LiquidGlass shape="pill">
+                    <View className="h-10 w-10 items-center justify-center">
+                      <Text className="text-xl" style={{ color: colors.ink }}>×</Text>
+                    </View>
+                  </LiquidGlass>
+                </Pressable>
+              </View>
+
+              <Text className="mb-2 text-xs font-semibold" style={{ color: colors.muted }}>HOUR</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {HOURS.map((value) => (
+                  <TimeCell key={value} value={value} active={value === hour} onPress={() => onHourChange(value)} colors={colors} />
+                ))}
+              </View>
+
+              <Text className="mb-2 mt-5 text-xs font-semibold" style={{ color: colors.muted }}>MINUTE</Text>
+              <View className="flex-row flex-wrap gap-2">
+                {MINUTES.map((value) => (
+                  <TimeCell key={value} value={value} active={value === minute} onPress={() => onMinuteChange(value)} colors={colors} wide />
+                ))}
+              </View>
+
+              <Pressable onPress={onConfirm} className="mt-6 items-center rounded-[18px] px-5 py-3.5" style={{ backgroundColor: "#FFFFFF" }}>
+                <Text className="font-semibold" style={{ color: "#22204A" }}>
+                  Set {String(hour).padStart(2, "0")}:{String(minute).padStart(2, "0")}
+                </Text>
+              </Pressable>
             </View>
-            <Pressable onPress={onClose} hitSlop={10} className="h-10 w-10 items-center justify-center rounded-full" style={{ backgroundColor: colors.surface }}>
-              <Text className="text-xl" style={{ color: colors.ink }}>×</Text>
-            </Pressable>
-          </View>
-
-          <Text className="mb-2 text-xs font-semibold" style={{ color: colors.muted }}>HOUR</Text>
-          <View className="flex-row flex-wrap gap-2">
-            {HOURS.map((value) => {
-              const active = value === hour;
-              return (
-                <Pressable
-                  key={value}
-                  onPress={() => onHourChange(value)}
-                  className="h-10 w-[13%] items-center justify-center rounded-[12px]"
-                  style={{ backgroundColor: active ? colors.accent : colors.surface }}
-                >
-                  <Text className="text-sm font-semibold" style={{ color: active ? "#FFFFFF" : colors.ink }}>
-                    {String(value).padStart(2, "0")}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Text className="mb-2 mt-5 text-xs font-semibold" style={{ color: colors.muted }}>MINUTE</Text>
-          <View className="flex-row flex-wrap gap-2">
-            {MINUTES.map((value) => {
-              const active = value === minute;
-              return (
-                <Pressable
-                  key={value}
-                  onPress={() => onMinuteChange(value)}
-                  className="h-10 flex-1 items-center justify-center rounded-[12px]"
-                  style={{ minWidth: "14%", backgroundColor: active ? colors.accent : colors.surface }}
-                >
-                  <Text className="text-sm font-semibold" style={{ color: active ? "#FFFFFF" : colors.ink }}>
-                    {String(value).padStart(2, "0")}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-
-          <Pressable onPress={onConfirm} className="mt-6 items-center rounded-[18px] px-5 py-3.5" style={{ backgroundColor: colors.accent }}>
-            <Text className="font-semibold text-white">Set {String(hour).padStart(2, "0")}:{String(minute).padStart(2, "0")}</Text>
-          </Pressable>
+          </LiquidGlass>
         </Animated.View>
       </View>
     </Modal>
+  );
+}
+
+function TimeCell({
+  value,
+  active,
+  onPress,
+  colors,
+  wide = false,
+}: {
+  value: number;
+  active: boolean;
+  onPress: () => void;
+  colors: ThemeColors;
+  wide?: boolean;
+}) {
+  return (
+    <Pressable onPress={onPress} className={wide ? "flex-1" : ""} style={wide ? { minWidth: "14%" } : { width: "13%" }}>
+      <LiquidGlass shape="pill" tone={active ? "active" : "default"}>
+        <View className="h-10 items-center justify-center">
+          <Text className="text-sm font-semibold" style={{ color: active ? "#FFFFFF" : colors.ink }}>
+            {String(value).padStart(2, "0")}
+          </Text>
+        </View>
+      </LiquidGlass>
+    </Pressable>
   );
 }
